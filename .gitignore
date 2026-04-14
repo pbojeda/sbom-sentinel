@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+out/
+build/
+
+# Environment — NEVER commit
+.env
+.env.local
+.env.*.local
+.env.development
+.env.staging
+.env.production
+.npmrc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+coverage/
+
+# Prisma
+backend/generated/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Cache
+.turbo/
+.cache/
+
+# Secrets and keys
+*.pem
+*.key
+
+# Claude Code (local settings are personal — hooks, permissions, notifications)
+.claude/settings.local.json
+
+# SDD PM Orchestrator (ephemeral session control files)
+docs/project_notes/pm-session.lock
+docs/project_notes/pm-stop.md
+
+# sdd-devflow upgrade backups (ignored — kept locally for recovery only)
+.sdd-backup/
+
+# sdd-devflow provenance tracking (local-only, content-addressable hashes)
+.sdd-meta.json

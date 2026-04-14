@@ -1,0 +1,214 @@
+---
+description: Backend development standards, best practices, and conventions. Covers DDD architecture, API design, testing, security, and deployment patterns.
+globs: ["backend/src/**/*.ts", "backend/prisma/**/*.{prisma,ts}", "backend/jest.config.*", "backend/tsconfig.json", "backend/package.json"]
+alwaysApply: true
+---
+
+<!-- CONFIG: This file defaults to Node.js/Express/Prisma/PostgreSQL. Adjust for your stack. -->
+
+# Backend Standards
+
+## Technology Stack
+
+- **Runtime**: Node.js with TypeScript (strict mode)
+- **Framework**: Express.js
+- **ORM**: Prisma (PostgreSQL)
+- **Validation**: Zod
+- **Testing**: Jest (90% coverage threshold)
+- **Logging**: Pino (structured JSON logs)
+
+## Architecture — DDD Layered
+
+```
+backend/src/
+├── domain/                # Business logic (pure, no dependencies)
+│   ├── entities/          # Domain entities
+│   ├── errors/            # Domain-specific errors
+│   └── repositories/      # Repository interfaces
+├── application/           # Use cases and orchestration
+│   ├── services/          # Application services
+│   └── validators/        # Input validation (Zod schemas)
+├── infrastructure/        # External integrations
+│   ├── repositories/      # Prisma repository implementations
+│   ├── prismaClient.ts    # Prisma client setup
+│   └── logger.ts          # Logging utilities
+├── presentation/          # HTTP layer
+│   ├── controllers/       # Request handlers
+│   ├── routes/            # Express route definitions
+│   └── middleware/         # Express middleware
+├── index.ts               # Application entry point
+└── server.ts              # Server setup
+```
+
+### Layer Rules
+
+- **Domain**: No imports from other layers. Pure business logic.
+- **Application**: Imports from Domain only. Orchestrates use cases.
+- **Infrastructure**: Implements Domain interfaces. Prisma, external APIs.
+- **Presentation**: Imports from Application only. HTTP concerns.
+
+## Naming Conventions
+
+- **Variables/Functions**: camelCase (`findById`, `candidateId`)
+- **Classes/Interfaces**: PascalCase (`UserService`, `IUserRepository`)
+- **Constants**: UPPER_SNAKE_CASE (`MAX_PAGE_SIZE`)
+- **Files**: camelCase (`userService.ts`, `userController.ts`)
+- **Error files**: PascalCase (`UserError.ts`, `AuthError.ts`)
+
+## API Design
+
+### REST Endpoints
+```
+GET    /resource          # List (with pagination)
+GET    /resource/:id      # Get by ID
+POST   /resource          # Create
+PUT    /resource/:id      # Full update
+PATCH  /resource/:id      # Partial update
+DELETE /resource/:id      # Delete
+```
+
+### Response Format
+```json
+{
+  "success": true,
+  "data": { ... },
+  "message": "Operation completed successfully"
+}
+```
+
+### Error Response Format
+```json
+{
+  "success": false,
+  "error": {
+    "message": "Validation failed",
+    "code": "VALIDATION_ERROR",
+    "details": [...]
+  }
+}
+```
+
+### HTTP Status Codes
+- `200` Success
+- `201` Created
+- `400` Bad Request (validation errors)
+- `401` Unauthorized
+- `403` Forbidden
+- `404` Not Found
+- `409` Conflict
+- `500` Internal Server Error
+
+### Validation Endpoints Pattern
+Return HTTP 200 with `valid: false` for business validation failures (not 400). Service returns structured result objects (never throws). Only input validation errors throw → 400.
+
+## Error Handling
+
+- Custom domain error classes extending `Error`
+- Global error middleware for consistent responses
+- Never swallow errors (empty catch blocks)
+- Descriptive error messages in English
+
+```typescript
+export class NotFoundError extends Error {
+  constructor(entity: string, id: string) {
+    super(`${entity} not found with ID: ${id}`);
+    this.name = 'NotFoundError';
+  }
+}
+```
+
+## Validation
+
+- Validate all inputs at the application layer using Zod
+- Validate before executing business logic
+- Return descriptive validation errors
+
+```typescript
+import { z } from 'zod';
+
+const CreateUserSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2).max(100),
+  role: z.enum(['USER', 'ADMIN']),
+});
+```
+
+## Database Patterns
+
+### Prisma Best Practices
+- `schema.prisma` is the single source of truth for DB structure
+- Use descriptive migration names: `npx prisma migrate dev --name add_user_role`
+- Always use `include` when the frontend reads relation fields
+- Convert Decimal fields with `Number()` before arithmetic
+- Import enums from generated path (not the main client import)
+- `@unique` already creates an index — no need for redundant `@@index`
+
+### Repository Pattern
+```typescript
+// Domain layer — interface
+export interface IUserRepository {
+  findById(id: string): Promise<User | null>;
+  save(user: User): Promise<User>;
+}
+
+// Infrastructure layer — implementation
+export class PrismaUserRepository implements IUserRepository {
+  constructor(private prisma: PrismaClient) {}
+
+  async findById(id: string): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { id } });
+  }
+}
+```
+
+## Testing Standards
+
+### Structure (AAA Pattern)
+```typescript
+describe('UserService - findById', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('should return user when found', async () => {
+    // Arrange
+    const mockUser = { id: '1', name: 'Test' };
+    mockRepo.findById.mockResolvedValue(mockUser);
+
+    // Act
+    const result = await service.findById('1');
+
+    // Assert
+    expect(result).toEqual(mockUser);
+    expect(mockRepo.findById).toHaveBeenCalledWith('1');
+  });
+});
+```
+
+### Test Categories (all required)
+1. **Happy Path**: Valid inputs → expected outputs
+2. **Error Handling**: Invalid inputs, DB errors, missing data
+3. **Edge Cases**: Boundary values, null/undefined, empty data
+4. **Validation**: Input validation, business rule enforcement
+
+### Mocking
+- Mock all external dependencies (DB, services)
+- Mock repository layer in service tests
+- Mock service layer in controller tests
+- Use `jest.mock()` at top of test files
+- Clear all mocks in `beforeEach()`
+
+## Security
+
+- Validate ALL user inputs before processing
+- Never commit `.env` files or secrets
+- Validate required environment variables at startup
+- Use parameterized queries (Prisma handles this)
+- Configure CORS to allow only specific origins in production
+- Use dependency injection for testability
+
+## Performance
+
+- Use Prisma `include` instead of N+1 queries
+- Select only needed fields for large datasets
+- Use `Promise.all()` for independent parallel operations
+- Implement proper pagination for list endpoints
+- Add database indexes for frequently queried fields

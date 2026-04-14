@@ -1,0 +1,226 @@
+---
+description: Frontend development standards, best practices, and conventions. Covers component architecture, state management, UI/UX guidelines, and testing practices.
+globs: ["frontend/**/*.{ts,tsx}", "frontend/tsconfig.json", "frontend/jest.config.*", "frontend/package.json"]
+alwaysApply: true
+---
+
+<!-- CONFIG: This file defaults to Next.js/React/Tailwind/Radix UI/Zustand. Adjust for your stack. -->
+
+# Frontend Standards
+
+## Technology Stack
+
+- **Framework**: Next.js (App Router) with React
+- **Language**: TypeScript (strict mode)
+- **Styling**: Tailwind CSS
+- **Components**: Radix UI primitives (shadcn/ui pattern)
+- **State Management**: Zustand (client-side state)
+- **Testing**: Jest + React Testing Library (unit), Playwright (e2e)
+
+## Project Structure
+
+```
+frontend/
+├── app/                   # Next.js App Router pages
+│   ├── layout.tsx         # Root layout
+│   ├── page.tsx           # Home page
+│   └── (routes)/          # Route groups
+├── components/            # UI components
+│   ├── ui/                # Primitive UI components (Button, Input, etc.)
+│   └── (features)/        # Feature-specific components
+├── lib/                   # Utilities and services
+│   ├── api/               # API client and types
+│   └── utils.ts           # General utilities
+├── stores/                # Zustand stores
+├── public/                # Static assets
+└── __tests__/             # Test utilities and fixtures
+```
+
+## Naming Conventions
+
+- **Components**: PascalCase (`UserCard.tsx`, `ProductList.tsx`)
+- **Variables/Functions**: camelCase (`handleSubmit`, `isLoading`)
+- **Constants**: UPPER_SNAKE_CASE (`API_BASE_URL`, `MAX_ITEMS`)
+- **Types/Interfaces**: PascalCase (`UserProps`, `CartItem`)
+- **Hooks**: camelCase with `use` prefix (`useAuth`, `useCartStore`)
+- **CSS classes**: kebab-case via Tailwind utilities
+- **Test files**: `ComponentName.test.tsx`
+
+## Component Conventions
+
+### Functional Components Only
+```typescript
+type UserCardProps = {
+  user: User;
+  onClick: (user: User) => void;
+};
+
+export function UserCard({ user, onClick }: UserCardProps) {
+  return (
+    <div className="rounded-lg border p-4" onClick={() => onClick(user)}>
+      <h3>{user.name}</h3>
+    </div>
+  );
+}
+```
+
+### Client vs. Server Components
+- Default to Server Components (no directive needed)
+- Add `'use client'` only when using hooks, event handlers, or browser APIs
+- Keep client components as small as possible
+
+### Props
+- Define TypeScript types for all props
+- Use destructuring
+- Include default values where appropriate
+
+## State Management
+
+### Zustand Stores
+```typescript
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+type CartStore = {
+  items: CartItem[];
+  addItem: (item: CartItem) => void;
+  removeItem: (id: string) => void;
+};
+
+export const useCartStore = create<CartStore>()(
+  persist(
+    (set) => ({
+      items: [],
+      addItem: (item) => set((s) => ({ items: [...s.items, item] })),
+      removeItem: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
+    }),
+    { name: 'cart-storage' }
+  )
+);
+```
+
+### Hydration Pattern
+When using `persist` with `skipHydration: true`, components must call `store.persist.rehydrate()` on mount.
+
+### Loading and Error States
+Always handle all three states for async operations:
+```typescript
+const [data, setData] = useState<Data | null>(null);
+const [isLoading, setIsLoading] = useState(true);
+const [error, setError] = useState<string | null>(null);
+```
+
+## Service Layer
+
+Centralize API calls in service files:
+
+```typescript
+// lib/api/userService.ts
+import { apiClient } from './apiClient';
+
+export const userService = {
+  async list(): Promise<User[]> {
+    const response = await apiClient.get('/users');
+    return response.data;
+  },
+
+  async getById(id: string): Promise<User> {
+    const response = await apiClient.get(`/users/${id}`);
+    return response.data;
+  },
+};
+```
+
+## API Types
+
+<!-- CONFIG: If using shared Zod schemas, import from @project/shared. If using OpenAPI code generation, uncomment the generate:api script below. -->
+
+Import shared types from the `shared/` workspace (see base-standards.mdc § Shared Types):
+
+```typescript
+import { UserSchema } from '@project/shared';
+import type { User } from '@project/shared';
+```
+
+If your project uses OpenAPI code generation instead, configure `npm run generate:api` in `package.json`.
+
+## UI Patterns
+
+### Radix UI Primitives
+Import from the `radix-ui` package (single package, not scoped):
+```typescript
+import { Select as SelectPrimitive } from "radix-ui";
+```
+
+### Form Handling
+- Use controlled components
+- Implement blur validation with touched tracking
+- Disable submit during loading
+- Show clear error messages
+
+### Success Feedback
+For mutating actions that don't redirect:
+```typescript
+const [successMessage, setSuccessMessage] = useState<string | null>(null);
+// After action: set message, auto-dismiss with setTimeout (5s)
+```
+
+### Admin Page Pattern
+Page (state management) → Table component (display) → Dialog (actions)
+
+## Testing Standards
+
+### React Testing Library
+```typescript
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
+describe('UserCard', () => {
+  it('should display user name', () => {
+    render(<UserCard user={mockUser} onClick={jest.fn()} />);
+    expect(screen.getByText('John Doe')).toBeInTheDocument();
+  });
+
+  it('should call onClick when clicked', async () => {
+    const user = userEvent.setup();
+    const onClick = jest.fn();
+    render(<UserCard user={mockUser} onClick={onClick} />);
+
+    await user.click(screen.getByText('John Doe'));
+    expect(onClick).toHaveBeenCalledWith(mockUser);
+  });
+});
+```
+
+### Test Patterns
+- Test user interactions, NOT implementation details
+- Mock services and stores at the module level
+- Use `jest.mock()` with **relative paths** (not `@/` aliases)
+- Mock Radix UI portals (Select, Dialog, Sheet) with native HTML in tests
+- Test loading states, error states, and empty states
+- Use test fixtures for consistent mock data
+
+### Test Fixtures
+Create factory functions for test data:
+```typescript
+// testing/fixtures.ts
+export function createUser(overrides?: Partial<User>): User {
+  return { id: '1', name: 'Test User', email: 'test@example.com', ...overrides };
+}
+```
+
+## Performance
+
+- Lazy load components when appropriate
+- Memoize expensive calculations with `useMemo`
+- Use `useCallback` for stable function references
+- Optimize images with Next.js `<Image>` component
+- Code split at route level
+
+## Accessibility
+
+- Include `aria-label` for interactive elements
+- Use semantic HTML elements
+- Ensure keyboard navigation
+- Provide alt text for images
+- Test with screen reader basics
