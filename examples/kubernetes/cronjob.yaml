@@ -1,0 +1,80 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sbom-sentinel
+  namespace: security
+  labels:
+    app: sbom-sentinel
+spec:
+  schedule: "0 2 * * *"          # 02:00 UTC daily — adjust to your timezone
+  concurrencyPolicy: Forbid       # Skip run if the previous one is still running
+  successfulJobsHistoryLimit: 7   # Keep last 7 successful runs
+  failedJobsHistoryLimit: 3       # Keep last 3 failed runs
+  jobTemplate:
+    spec:
+      backoffLimit: 1             # Retry once on failure
+      activeDeadlineSeconds: 3600 # Kill the job after 1 hour
+      template:
+        metadata:
+          labels:
+            app: sbom-sentinel
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: sentinel
+              image: ghcr.io/pbojeda/sbom-sentinel:latest
+              imagePullPolicy: Always
+              args: ["scan"]
+
+              # Credentials and sensitive config come from a Secret
+              envFrom:
+                - secretRef:
+                    name: sbom-sentinel-secrets
+
+              # Non-sensitive env vars
+              env:
+                - name: SENTINEL_OUTPUT_DIR
+                  value: /app/artifacts
+                - name: LOG_LEVEL
+                  value: info
+
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+
+              volumeMounts:
+                # Config file from ConfigMap
+                - name: config
+                  mountPath: /app/sbom-sentinel.config.json
+                  subPath: sbom-sentinel.config.json
+                  readOnly: true
+                # Persistent storage for artifacts and reports
+                - name: output
+                  mountPath: /app/artifacts
+
+          volumes:
+            - name: config
+              configMap:
+                name: sbom-sentinel-config
+            - name: output
+              persistentVolumeClaim:
+                claimName: sbom-sentinel-output
+
+---
+# PersistentVolumeClaim for report storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sbom-sentinel-output
+  namespace: security
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: standard   # uncomment and set to your storage class

@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sbom-sentinel-config
+  namespace: security
+data:
+  sbom-sentinel.config.json: |
+    {
+      "$schema": "https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json",
+      "manufacturer": "My Company, S.L.",
+      "outputDir": "/app/artifacts",
+      "notifications": {
+        "onVulnerabilities": true,
+        "onErrors": true,
+        "slack": { "enabled": true },
+        "email": { "enabled": false }
+      },
+      "repos": [
+        {
+          "name": "my-backend",
+          "cloneUrl": "https://github.com/myorg/my-backend.git",
+          "branch": "main",
+          "type": "node"
+        },
+        {
+          "name": "my-library",
+          "cloneUrl": "https://github.com/myorg/my-library.git",
+          "branch": "main",
+          "type": "node"
+        }
+      ]
+    }

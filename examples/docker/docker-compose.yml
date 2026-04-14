@@ -1,0 +1,31 @@
+services:
+  sbom-sentinel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sbom-sentinel:local
+    command: scan
+    working_dir: /app
+    environment:
+      # Required — token for cloning repositories
+      GIT_TOKEN: ${GIT_TOKEN}
+      # Optional — Git username (default: x-token-auth)
+      GIT_USER: ${GIT_USER:-x-token-auth}
+      # Optional — Slack webhook for notifications
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      # Optional — SMTP for email notifications
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      EMAIL_TO: ${EMAIL_TO:-}
+      # Output directory (inside container)
+      SENTINEL_OUTPUT_DIR: /app/artifacts
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      # Config file (read-only)
+      - ./sbom-sentinel.config.json:/app/sbom-sentinel.config.json:ro
+      # Artifacts output (persisted on host)
+      - ./artifacts:/app/artifacts
+    restart: "no"

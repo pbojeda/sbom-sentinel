@@ -1,0 +1,39 @@
+# Source and tests (only dist goes to npm)
+src/
+tests/
+*.test.ts
+*.spec.ts
+
+# Config files
+tsconfig.json
+vitest.config.ts
+.env.example
+.gitignore
+.eslintrc*
+.prettierrc*
+
+# CI/CD
+.github/
+
+# Documentation and examples (kept in repo, not in package)
+initialDocs/
+docs/
+ai-specs/
+CONTRIBUTING.md
+CHANGELOG.md
+
+# Output artifacts
+coverage/
+artifacts/
+
+# IDE and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code
+.claude/
+CLAUDE.md
+AGENTS.md
+.sdd-version
+.sdd-meta.json

@@ -1,0 +1,87 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:1a2b3c4d-1234-5678-abcd-ef0123456789",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2024-04-14T13:00:00Z",
+    "tools": [
+      {
+        "vendor": "CycloneDX",
+        "name": "cdxgen",
+        "version": "11.0.0"
+      }
+    ],
+    "component": {
+      "type": "library",
+      "name": "my-backend",
+      "version": "1.0.0",
+      "purl": "pkg:npm/my-backend@1.0.0"
+    },
+    "manufacture": {
+      "name": "My Company, S.L."
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "axios",
+      "version": "0.21.1",
+      "purl": "pkg:npm/axios@0.21.1",
+      "licenses": [
+        { "license": { "id": "MIT" } }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lodash",
+      "version": "4.17.20",
+      "purl": "pkg:npm/lodash@4.17.20",
+      "licenses": [
+        { "license": { "id": "MIT" } }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "dicer",
+      "version": "0.3.0",
+      "purl": "pkg:npm/dicer@0.3.0",
+      "licenses": [
+        { "license": { "id": "MIT" } }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "send",
+      "version": "0.18.0",
+      "purl": "pkg:npm/send@0.18.0",
+      "licenses": [
+        { "license": { "id": "MIT" } }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "express",
+      "version": "4.18.2",
+      "purl": "pkg:npm/express@4.18.2",
+      "licenses": [
+        { "license": { "id": "MIT" } }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:npm/my-backend@1.0.0",
+      "dependsOn": [
+        "pkg:npm/axios@0.21.1",
+        "pkg:npm/express@4.18.2"
+      ]
+    },
+    {
+      "ref": "pkg:npm/express@4.18.2",
+      "dependsOn": [
+        "pkg:npm/send@0.18.0"
+      ]
+    }
+  ]
+}

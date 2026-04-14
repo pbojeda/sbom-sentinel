@@ -1,0 +1,225 @@
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { log, ok, warn, err, dim, run } from './logger.js';
+import { cloneRepo, cleanupRepo } from './git.js';
+import { generateSbom } from './sbom.js';
+import { scanSbom } from './scanner.js';
+import { buildSummary, generateReports } from './report.js';
+import type { ReportFiles } from './report.js';
+import { notify } from './notify.js';
+import type { NotifyConfig } from './notify.js';
+import type { LoadedConfig } from './config.js';
+import type { RepoResult, GlobalSummary } from './types.js';
+
+// ── Public types ──────────────────────────────────────────────────────────────
+
+export interface RunResult {
+  summary: GlobalSummary;
+  reports: ReportFiles;
+  /** 0 = ok · 1 = CRITICAL/HIGH vulnerabilities found · 2 = scan errors */
+  exitCode: 0 | 1 | 2;
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+/**
+ * Orchestrates the full scan pipeline:
+ *   1. Verify external tools (git, cdxgen, trivy)
+ *   2. For each repo: clone → generate SBOM → scan → cleanup
+ *   3. Build consolidated GlobalSummary
+ *   4. Write JSON / HTML / TXT reports
+ *   5. Send Slack / email notifications
+ *   6. Return result + exit code
+ *
+ * Individual repo failures are captured in the summary rather than aborting
+ * the entire run. The exit code reflects the worst outcome:
+ *   - 2 if any repo errored (incomplete scan)
+ *   - 1 if CRITICAL/HIGH findings (but all scans succeeded)
+ *   - 0 if all clear
+ */
+export async function scan(config: LoadedConfig): Promise<RunResult> {
+  if (config.dryRun) {
+    return executeDryRun(config);
+  }
+
+  // ── 1. Tool check ──────────────────────────────────────────────────────────
+
+  checkExternalTools();
+
+  // ── 2. Setup ───────────────────────────────────────────────────────────────
+
+  const now = new Date();
+  const workDir = join(tmpdir(), `sbom-sentinel-${now.getTime()}`);
+  mkdirSync(workDir, { recursive: true });
+  dim(`Work directory: ${workDir}`);
+
+  const { repos } = config.config;
+  log(`Starting scan for ${repos.length} repository/repositories…`);
+
+  const results: RepoResult[] = [];
+
+  // ── 3. Per-repo pipeline ───────────────────────────────────────────────────
+
+  for (const repo of repos) {
+    log(`\n── ${repo.name} (${repo.branch}) ──`);
+
+    const result: RepoResult = {
+      repo: repo.name,
+      branch: repo.branch,
+      commitSha: '',
+      sbomFile: null,
+      trivyFile: null,
+      findings: [],
+      error: false,
+    };
+
+    try {
+      // Clone
+      const { commitSha, localPath } = cloneRepo(repo, workDir, config.gitToken, config.gitUser);
+      result.commitSha = commitSha;
+
+      // Generate SBOM
+      const { sbomFile, componentCount } = generateSbom(repo, localPath, config.outputDir, commitSha, now);
+      result.sbomFile = sbomFile;
+      dim(`  SBOM: ${componentCount} components`);
+
+      // Scan with Trivy
+      const { trivyFile, findings, counts } = scanSbom(sbomFile, config.outputDir, repo.name, repo.branch, commitSha, now);
+      result.trivyFile = trivyFile;
+      result.findings = findings;
+
+      const summary = formatCounts(counts);
+      ok(`${repo.name}: ${findings.length} findings${summary ? ` (${summary})` : ''}`);
+    } catch (e) {
+      result.error = true;
+      result.errorMessage = e instanceof Error ? e.message : String(e);
+      err(`${repo.name} failed: ${result.errorMessage}`);
+    } finally {
+      // Always delete the clone — it can be several GB
+      cleanupRepo(join(workDir, repo.name));
+    }
+
+    results.push(result);
+  }
+
+  // ── 4. Cleanup work dir ────────────────────────────────────────────────────
+
+  try {
+    rmSync(workDir, { recursive: true, force: true });
+  } catch {
+    warn(`Could not remove work directory: ${workDir}`);
+  }
+
+  // ── 5. Consolidate ─────────────────────────────────────────────────────────
+
+  const globalSummary = buildSummary(results, now);
+
+  // ── 6. Reports ─────────────────────────────────────────────────────────────
+
+  const reports = generateReports(globalSummary, config.outputDir);
+
+  // ── 7. Notify ──────────────────────────────────────────────────────────────
+
+  const notifyConfig: NotifyConfig = {
+    slackWebhookUrl: config.slackWebhookUrl,
+    smtpHost: config.smtpHost,
+    smtpPort: config.smtpPort,
+    smtpUser: config.smtpUser,
+    smtpPass: config.smtpPass,
+    emailFrom: config.emailFrom,
+    emailTo: config.emailTo,
+    notifications: config.config.notifications,
+  };
+
+  await notify(globalSummary, notifyConfig);
+
+  // ── 8. Exit code ───────────────────────────────────────────────────────────
+  // Priority: 2 (errors) > 1 (vulns) > 0 (ok)
+
+  const exitCode: 0 | 1 | 2 = globalSummary.hasErrors
+    ? 2
+    : globalSummary.hasCriticalOrHigh
+    ? 1
+    : 0;
+
+  log(`\nScan complete. Exit code: ${exitCode}`);
+
+  return { summary: globalSummary, reports, exitCode };
+}
+
+// ── External tool check ───────────────────────────────────────────────────────
+
+/**
+ * Checks that git, cdxgen and trivy are available in PATH.
+ * Throws with clear install instructions if any are missing.
+ *
+ * Also exported so the CLI `check` command can call it directly.
+ */
+export function checkExternalTools(): void {
+  const tools = [
+    {
+      name: 'git',
+      cmd: 'git --version',
+      hint: 'https://git-scm.com/downloads',
+    },
+    {
+      name: 'cdxgen',
+      cmd: 'cdxgen --version',
+      hint: 'npm install -g @cyclonedx/cdxgen',
+    },
+    {
+      name: 'trivy',
+      cmd: 'trivy --version',
+      hint: 'https://trivy.dev/latest/getting-started/installation/',
+    },
+  ];
+
+  const missing: string[] = [];
+
+  for (const tool of tools) {
+    try {
+      run(tool.cmd, { stdio: 'pipe' });
+      dim(`  ${tool.name}: ok`);
+    } catch {
+      missing.push(`  ${tool.name.padEnd(10)} → install: ${tool.hint}`);
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `The following required tools are not installed or not in PATH:\n\n` +
+        missing.join('\n') +
+        `\n\nInstall them and run again. See the README for details.`,
+    );
+  }
+}
+
+// ── Dry-run ───────────────────────────────────────────────────────────────────
+
+function executeDryRun(config: LoadedConfig): RunResult {
+  log('DRY RUN — no commands will be executed\n');
+
+  log(`Repositories (${config.config.repos.length}):`);
+  for (const repo of config.config.repos) {
+    log(`  ${repo.name.padEnd(28)} branch=${repo.branch}  type=${repo.type}  mode=${repo.mode ?? 'cdxgen'}`);
+  }
+
+  log(`\nOutput directory : ${config.outputDir}`);
+  log(`Git user         : ${config.gitUser}`);
+  log(`Git token set    : ${!!config.gitToken}`);
+  log(`Slack webhook    : ${config.slackWebhookUrl ? 'configured' : 'not set'}`);
+  log(`Email recipients : ${config.emailTo.length > 0 ? config.emailTo.join(', ') : 'not set'}`);
+
+  const summary = buildSummary([], new Date());
+  return { summary, reports: { json: '', html: '', txt: '' }, exitCode: 0 };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatCounts(counts: { CRITICAL: number; HIGH: number; MEDIUM: number; LOW: number }): string {
+  return (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const)
+    .filter((s) => counts[s] > 0)
+    .map((s) => `${counts[s]} ${s}`)
+    .join(', ');
+}

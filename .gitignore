@@ -7,6 +7,9 @@ dist/
 out/
 build/
 
+# sbom-sentinel output artifacts
+artifacts/
+
 # Environment — NEVER commit
 .env
 .env.local

@@ -1,0 +1,271 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { loadConfig, parseArgs, loadDotEnv } from '../../src/config.js';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const VALID_REPO = {
+  name: 'my-backend',
+  cloneUrl: 'https://github.com/myorg/my-backend.git',
+  branch: 'main',
+  type: 'node',
+};
+
+function makeTempDir(): string {
+  const dir = join(tmpdir(), `sentinel-cfg-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function writeConfigFile(dir: string, content: unknown, filename = 'sbom-sentinel.config.json'): void {
+  writeFileSync(join(dir, filename), JSON.stringify(content));
+}
+
+// ── Env var isolation ─────────────────────────────────────────────────────────
+
+const ENV_KEYS = [
+  'GIT_TOKEN', 'GIT_USER', 'SLACK_WEBHOOK_URL', 'SMTP_HOST', 'SMTP_PORT',
+  'SMTP_USER', 'SMTP_PASS', 'EMAIL_FROM', 'EMAIL_TO', 'SENTINEL_CONFIG',
+  'SENTINEL_OUTPUT_DIR', 'SENTINEL_REPO', 'LOG_LEVEL',
+];
+
+let savedEnv: Record<string, string | undefined> = {};
+
+beforeEach(() => {
+  savedEnv = {};
+  for (const key of ENV_KEYS) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+});
+
+afterEach(() => {
+  for (const key of ENV_KEYS) {
+    if (savedEnv[key] === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = savedEnv[key];
+    }
+  }
+});
+
+// ── parseArgs ─────────────────────────────────────────────────────────────────
+
+describe('parseArgs', () => {
+  it('parses a bare command', () => {
+    expect(parseArgs(['scan'])).toMatchObject({ command: 'scan', dryRun: false });
+  });
+
+  it('parses --dry-run', () => {
+    expect(parseArgs(['scan', '--dry-run'])).toMatchObject({ command: 'scan', dryRun: true });
+  });
+
+  it('parses --repo <name>', () => {
+    expect(parseArgs(['scan', '--repo', 'my-backend'])).toMatchObject({ repo: 'my-backend' });
+  });
+
+  it('parses --config <path>', () => {
+    expect(parseArgs(['scan', '--config', '/tmp/cfg.json'])).toMatchObject({
+      configPath: '/tmp/cfg.json',
+    });
+  });
+
+  it('parses short flags -r and -c', () => {
+    expect(parseArgs(['-r', 'api', '-c', 'cfg.json'])).toMatchObject({
+      repo: 'api',
+      configPath: 'cfg.json',
+    });
+  });
+
+  it('returns defaults when no args', () => {
+    expect(parseArgs([])).toEqual({ dryRun: false });
+  });
+});
+
+// ── loadDotEnv ────────────────────────────────────────────────────────────────
+
+describe('loadDotEnv', () => {
+  it('sets env vars from .env file', () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, '.env'), 'GIT_TOKEN=abc123\nLOG_LEVEL=debug\n');
+
+    loadDotEnv(dir);
+
+    expect(process.env['GIT_TOKEN']).toBe('abc123');
+    expect(process.env['LOG_LEVEL']).toBe('debug');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('does not overwrite already-set env vars', () => {
+    const dir = makeTempDir();
+    process.env['GIT_TOKEN'] = 'original';
+    writeFileSync(join(dir, '.env'), 'GIT_TOKEN=from-file\n');
+
+    loadDotEnv(dir);
+
+    expect(process.env['GIT_TOKEN']).toBe('original');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('strips surrounding quotes from values', () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, '.env'), 'SLACK_WEBHOOK_URL="https://hooks.slack.com/xxx"\n');
+
+    loadDotEnv(dir);
+
+    expect(process.env['SLACK_WEBHOOK_URL']).toBe('https://hooks.slack.com/xxx');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('silently skips when .env does not exist', () => {
+    expect(() => loadDotEnv('/nonexistent/path')).not.toThrow();
+  });
+
+  it('ignores comment lines and blank lines', () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, '.env'), '# comment\n\nGIT_USER=myuser\n');
+
+    loadDotEnv(dir);
+
+    expect(process.env['GIT_USER']).toBe('myuser');
+    rmSync(dir, { recursive: true });
+  });
+});
+
+// ── loadConfig ────────────────────────────────────────────────────────────────
+
+describe('loadConfig', () => {
+  it('loads a valid config and returns parsed result', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+
+    const result = loadConfig([], dir);
+
+    expect(result.config.repos).toHaveLength(1);
+    expect(result.config.repos[0].name).toBe('my-backend');
+    expect(result.outputDir).toBe('./artifacts');
+    expect(result.gitUser).toBe('x-token-auth');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws a clear error when config file does not exist', () => {
+    const dir = makeTempDir();
+    // No config file written
+
+    expect(() => loadConfig([], dir)).toThrow(/Config file not found/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws a clear error when repos field is missing', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { manufacturer: 'Acme' }); // no repos key
+
+    expect(() => loadConfig([], dir)).toThrow(/"repos"/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when a required repo field is missing', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [{ name: 'x', cloneUrl: 'https://x.com/repo.git' }] }); // missing branch, type
+
+    expect(() => loadConfig([], dir)).toThrow(/"branch"/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('filters out repos with enabled: false', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, {
+      repos: [
+        VALID_REPO,
+        { ...VALID_REPO, name: 'disabled-repo', enabled: false },
+      ],
+    });
+
+    const result = loadConfig([], dir);
+
+    expect(result.config.repos).toHaveLength(1);
+    expect(result.config.repos[0].name).toBe('my-backend');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('filters to a single repo when --repo is passed', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, {
+      repos: [
+        VALID_REPO,
+        { ...VALID_REPO, name: 'other-backend', cloneUrl: 'https://github.com/org/other.git' },
+      ],
+    });
+
+    const result = loadConfig(['scan', '--repo', 'other-backend'], dir);
+
+    expect(result.config.repos).toHaveLength(1);
+    expect(result.config.repos[0].name).toBe('other-backend');
+    expect(result.targetRepo).toBe('other-backend');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when --repo does not match any enabled repo', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+
+    expect(() => loadConfig(['--repo', 'nonexistent'], dir)).toThrow(/not found/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('env vars take priority over config file values', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO], outputDir: './from-config' });
+    process.env['SENTINEL_OUTPUT_DIR'] = '/from/env';
+    process.env['GIT_TOKEN'] = 'env-token';
+    process.env['GIT_USER'] = 'env-user';
+
+    const result = loadConfig([], dir);
+
+    expect(result.outputDir).toBe('/from/env');
+    expect(result.gitToken).toBe('env-token');
+    expect(result.gitUser).toBe('env-user');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('SENTINEL_REPO env var takes priority over --repo flag', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, {
+      repos: [
+        VALID_REPO,
+        { ...VALID_REPO, name: 'env-repo', cloneUrl: 'https://github.com/org/env.git' },
+      ],
+    });
+    process.env['SENTINEL_REPO'] = 'env-repo';
+
+    const result = loadConfig(['--repo', 'my-backend'], dir);
+
+    expect(result.config.repos[0].name).toBe('env-repo');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('parses EMAIL_TO as array split by comma', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['EMAIL_TO'] = 'a@x.com, b@x.com , c@x.com';
+
+    const result = loadConfig([], dir);
+
+    expect(result.emailTo).toEqual(['a@x.com', 'b@x.com', 'c@x.com']);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('uses SENTINEL_CONFIG env var to find config file', () => {
+    const dir = makeTempDir();
+    const customPath = join(dir, 'custom.json');
+    writeFileSync(customPath, JSON.stringify({ repos: [VALID_REPO] }));
+    process.env['SENTINEL_CONFIG'] = customPath;
+
+    const result = loadConfig([], dir);
+
+    expect(result.config.repos[0].name).toBe('my-backend');
+    rmSync(dir, { recursive: true });
+  });
+});

@@ -1,0 +1,156 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json",
+  "title": "sbom-sentinel configuration",
+  "description": "Configuration file for sbom-sentinel — automated SBOM generation and vulnerability scanning.",
+  "type": "object",
+  "required": ["repos"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference. Used by editors for autocompletion and validation."
+    },
+    "manufacturer": {
+      "type": "string",
+      "description": "Organization or manufacturer name embedded in the generated CycloneDX SBOMs.",
+      "examples": ["My Company, S.L.", "Acme Corp"]
+    },
+    "outputDir": {
+      "type": "string",
+      "description": "Directory where SBOM artifacts and reports are written. Can be overridden with the SENTINEL_OUTPUT_DIR environment variable.",
+      "default": "./artifacts",
+      "examples": ["./artifacts", "/var/sbom-output"]
+    },
+    "notifications": {
+      "type": "object",
+      "description": "Notification settings. Credentials (webhook URL, SMTP password) are provided via environment variables.",
+      "additionalProperties": false,
+      "properties": {
+        "onVulnerabilities": {
+          "type": "boolean",
+          "description": "Send a notification when CRITICAL or HIGH vulnerabilities are found.",
+          "default": true
+        },
+        "onErrors": {
+          "type": "boolean",
+          "description": "Send a notification when one or more repositories fail to scan.",
+          "default": true
+        },
+        "slack": {
+          "type": "object",
+          "description": "Slack notification settings. Set SLACK_WEBHOOK_URL in the environment.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable Slack notifications.",
+              "default": false
+            }
+          }
+        },
+        "email": {
+          "type": "object",
+          "description": "Email notification settings. Set SMTP_HOST, SMTP_USER, SMTP_PASS, EMAIL_FROM, EMAIL_TO in the environment.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable email notifications. Requires nodemailer (npm install nodemailer).",
+              "default": false
+            }
+          }
+        }
+      }
+    },
+    "repos": {
+      "type": "array",
+      "description": "List of repositories to scan.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/RepoConfig"
+      }
+    }
+  },
+  "$defs": {
+    "RepoConfig": {
+      "type": "object",
+      "title": "Repository configuration",
+      "required": ["name", "cloneUrl", "branch", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique identifier for this repository. Used in report labels and artifact filenames.",
+          "examples": ["my-backend", "my-ios-app"]
+        },
+        "cloneUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "HTTPS URL used to clone the repository. Credentials are injected via GIT_TOKEN and GIT_USER environment variables.",
+          "examples": [
+            "https://github.com/myorg/my-backend.git",
+            "https://bitbucket.org/myorg/my-repo.git",
+            "https://gitlab.com/myorg/my-project.git"
+          ]
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Branch to clone and scan.",
+          "examples": ["main", "master", "develop", "release/1.0"]
+        },
+        "type": {
+          "type": "string",
+          "description": "Repository ecosystem type. Passed to cdxgen to select the appropriate SBOM generator.",
+          "enum": ["node", "swift", "gradle", "python", "go", "rust"]
+        },
+        "mode": {
+          "type": "string",
+          "description": "SBOM generation mode. Use 'cdxgen' (default) to run cdxgen automatically, or 'command' to run a custom script defined in sbomCommand.",
+          "enum": ["cdxgen", "command"],
+          "default": "cdxgen"
+        },
+        "path": {
+          "type": "string",
+          "description": "Relative path within the repository to pass to cdxgen as the analysis root. Defaults to the repository root.",
+          "examples": [".", "backend/", "packages/core"]
+        },
+        "sbomCommand": {
+          "type": "string",
+          "description": "Shell command to run when mode is 'command'. Executed in the cloned repository root. Must produce the SBOM file at the path specified by sbomOutput.",
+          "examples": ["npm ci && npm run sbom", "gradle cyclonedxBom"]
+        },
+        "sbomOutput": {
+          "type": "string",
+          "description": "Relative path (from the repository root) to the SBOM file produced by sbomCommand. Only used when mode is 'command'.",
+          "default": "bom.json",
+          "examples": ["bom.json", "sbom/bom.json", "build/reports/bom.json"]
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Set to false to skip this repository without removing it from the config.",
+          "default": true
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-text notes for documentation purposes. Not used by sbom-sentinel.",
+          "examples": ["Enable when Package.resolved is committed", "Deprecated — to be removed in Q3"]
+        }
+      },
+      "if": {
+        "properties": { "mode": { "const": "command" } },
+        "required": ["mode"]
+      },
+      "then": {
+        "required": ["sbomCommand"],
+        "properties": {
+          "sbomCommand": {
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

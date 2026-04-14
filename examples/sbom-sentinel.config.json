@@ -1,0 +1,65 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json",
+  "manufacturer": "My Company, S.L.",
+  "outputDir": "./artifacts",
+  "notifications": {
+    "onVulnerabilities": true,
+    "onErrors": true,
+    "slack": {
+      "enabled": true
+    },
+    "email": {
+      "enabled": false
+    }
+  },
+  "repos": [
+    {
+      "name": "my-backend",
+      "cloneUrl": "https://github.com/myorg/my-backend.git",
+      "branch": "main",
+      "type": "node"
+    },
+    {
+      "name": "my-frontend",
+      "cloneUrl": "https://github.com/myorg/my-frontend.git",
+      "branch": "main",
+      "type": "node"
+    },
+    {
+      "name": "my-library",
+      "cloneUrl": "https://github.com/myorg/my-library.git",
+      "branch": "main",
+      "type": "node",
+      "mode": "command",
+      "sbomCommand": "npm ci && npm run sbom",
+      "sbomOutput": "sbom/bom.json",
+      "notes": "This repo generates its own SBOM via a custom script"
+    },
+    {
+      "name": "my-android-app",
+      "cloneUrl": "https://bitbucket.org/myorg/my-android-app.git",
+      "branch": "main",
+      "type": "gradle"
+    },
+    {
+      "name": "my-ios-app",
+      "cloneUrl": "https://github.com/myorg/my-ios-app.git",
+      "branch": "main",
+      "type": "swift",
+      "enabled": false,
+      "notes": "Enable when Package.resolved is committed to the repository"
+    },
+    {
+      "name": "my-data-service",
+      "cloneUrl": "https://github.com/myorg/my-data-service.git",
+      "branch": "main",
+      "type": "python"
+    },
+    {
+      "name": "my-gateway",
+      "cloneUrl": "https://github.com/myorg/my-gateway.git",
+      "branch": "main",
+      "type": "go"
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+# Bitbucket Pipelines — SBOM Sentinel
+#
+# Required repository variables (Settings > Pipelines > Repository variables):
+#   GIT_TOKEN           — token for cloning repositories
+#   SLACK_WEBHOOK_URL   — (optional) Slack webhook for notifications
+#
+# Schedule configuration:
+#   Settings > Pipelines > Schedules → add a schedule for the branch that holds
+#   this file and select the "sbom-scan" custom pipeline.
+
+image: node:20
+
+definitions:
+  steps:
+    - step: &install-tools
+        name: Install tools
+        script:
+          - apt-get update && apt-get install -y curl
+          - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh
+              | sh -s -- -b /usr/local/bin
+          - npm install -g @cyclonedx/cdxgen@11 sbom-sentinel
+          - sbom-sentinel check
+
+pipelines:
+  custom:
+    sbom-scan:
+      - step:
+          name: SBOM Vulnerability Scan
+          caches:
+            - node
+          script:
+            # Install tools
+            - apt-get update && apt-get install -y curl
+            - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh
+                | sh -s -- -b /usr/local/bin
+            - npm install -g @cyclonedx/cdxgen@11 sbom-sentinel
+
+            # Verify tools
+            - sbom-sentinel check
+
+            # Run scan (credentials injected via repository variables)
+            - sbom-sentinel scan
+          artifacts:
+            - artifacts/reports/**
+
+    sbom-scan-single:
+      - variables:
+          - name: REPO_NAME
+      - step:
+          name: Scan single repository
+          script:
+            - apt-get update && apt-get install -y curl
+            - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh
+                | sh -s -- -b /usr/local/bin
+            - npm install -g @cyclonedx/cdxgen@11 sbom-sentinel
+            - sbom-sentinel scan --repo "$REPO_NAME"
+          artifacts:
+            - artifacts/reports/**
