@@ -3,9 +3,6 @@ node_modules/
 
 # Build output
 dist/
-.next/
-out/
-build/
 
 # sbom-sentinel output artifacts
 artifacts/
@@ -14,9 +11,6 @@ artifacts/
 .env
 .env.local
 .env.*.local
-.env.development
-.env.staging
-.env.production
 .npmrc
 
 # OS
@@ -32,30 +26,22 @@ Thumbs.db
 # Testing
 coverage/
 
-# Prisma
-backend/generated/
-
 # Logs
 *.log
 npm-debug.log*
 
 # Cache
-.turbo/
 .cache/
 
 # Secrets and keys
 *.pem
 *.key
 
-# Claude Code (local settings are personal — hooks, permissions, notifications)
+# Claude Code local settings (personal — not shared)
 .claude/settings.local.json
 
-# SDD PM Orchestrator (ephemeral session control files)
-docs/project_notes/pm-session.lock
-docs/project_notes/pm-stop.md
-
-# sdd-devflow upgrade backups (ignored — kept locally for recovery only)
-.sdd-backup/
-
-# sdd-devflow provenance tracking (local-only, content-addressable hashes)
+# SDD DevFlow local metadata (not part of sbom-sentinel)
 .sdd-meta.json
+
+# Local spec/onboarding docs (not part of the published package)
+initialDocs/
