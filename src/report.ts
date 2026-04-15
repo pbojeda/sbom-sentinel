@@ -153,7 +153,8 @@ export function generateText(summary: GlobalSummary): string {
   );
 
   if (critHighFindings.length > 0) {
-    lines.push('CRITICAL / HIGH FINDINGS');
+    const uniqueTxtCveCount = new Set(critHighFindings.map((f) => f.id)).size;
+    lines.push(`CRITICAL / HIGH FINDINGS (${critHighFindings.length} findings · ${uniqueTxtCveCount} unique CVE IDs)`);
     lines.push(`  ${'CVE ID'.padEnd(22)} ${'PACKAGE'.padEnd(18)} ${'INSTALLED'.padEnd(14)} ${'FIXED'.padEnd(14)} SEV`);
     lines.push(`  ${'-'.repeat(80)}`);
     for (const f of critHighFindings) {
@@ -238,11 +239,13 @@ export function generateHtml(summary: GlobalSummary): string {
         .map((f) => ({ ...f, repoName: r.repo })),
     );
 
+  const uniqueCritHighCveCount = new Set(allCritHighFindings.map((f) => f.id)).size;
+
   const findingsSection =
     allCritHighFindings.length === 0
       ? ''
       : `
-    <h2>Critical / High Findings</h2>
+    <h2>Critical / High Findings <span class="findings-meta">${allCritHighFindings.length} findings · ${uniqueCritHighCveCount} unique CVE IDs</span></h2>
     <table>
       <thead>
         <tr>
@@ -291,6 +294,7 @@ export function generateHtml(summary: GlobalSummary): string {
     .badge.high{background:#fff7ed;color:#ea580c;border:1px solid #fdba74}
     .badge.medium{background:#fefce8;color:#ca8a04;border:1px solid #fde047}
     .badge.low{background:#eff6ff;color:#2563eb;border:1px solid #93c5fd}
+    .findings-meta{font-weight:400;color:#6b7280;font-size:13px;margin-left:8px}
     table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px}
     th{background:#f3f4f6;text-align:left;padding:8px 10px;font-weight:600;border-bottom:2px solid #e5e7eb}
     td{padding:7px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top}

@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] — 2026-04-15
+
+### Changed
+
+- **Unique CVE count in findings section** — the Critical / High Findings table header now shows both the total number of findings and the number of unique CVE IDs (e.g. "8 findings · 3 unique CVE IDs"). This makes it clear when multiple installed versions of the same package are each affected by the same CVE.
+
+---
+
 ## [0.2.0] — 2026-04-15
 
 ### Added
@@ -54,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full unit test suite with Vitest (121 tests, zero external tool calls in tests)
 - Examples: Docker, Kubernetes CronJob, GitHub Actions, Bitbucket Pipelines
 
-[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pbojeda/sbom-sentinel/releases/tag/v0.1.0

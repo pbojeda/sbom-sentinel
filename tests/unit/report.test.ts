@@ -275,6 +275,30 @@ describe('generateHtml', () => {
     expect(html).toContain('href="https://avd.aquasec.com/nvd/cve-2022-24434"');
   });
 
+  it('shows findings count and unique CVE ID count in findings section header', () => {
+    const summary = buildSummary([RESULT_WITH_FINDINGS], NOW);
+    const html = generateHtml(summary);
+
+    // RESULT_WITH_FINDINGS has 1 CRITICAL + 1 HIGH = 2 findings, 2 unique CVE IDs
+    expect(html).toContain('2 findings · 2 unique CVE IDs');
+  });
+
+  it('deduplicates CVE IDs in unique count when same CVE affects multiple installed versions', () => {
+    const sameCveDifferentVersion: RepoResult = {
+      ...RESULT_WITH_FINDINGS,
+      findings: [
+        FINDING_CRITICAL,
+        { ...FINDING_CRITICAL, installed: '0.4.0' }, // same CVE, different version
+        FINDING_HIGH,
+      ],
+    };
+    const summary = buildSummary([sameCveDifferentVersion], NOW);
+    const html = generateHtml(summary);
+
+    // 3 findings total but only 2 unique CVE IDs
+    expect(html).toContain('3 findings · 2 unique CVE IDs');
+  });
+
   it('renders the errors section when repos failed', () => {
     const summary = buildSummary([RESULT_ERROR], NOW);
     const html = generateHtml(summary);
