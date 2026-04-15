@@ -49,10 +49,17 @@ export function repoTokenEnvKey(platform: GitPlatform, repoName: string): string
  */
 export function makeSanitizer(token: string): (s: string) => string {
   if (!token) return (s) => s;
-  // Escape special regex characters so the token is matched literally
+  const patterns: RegExp[] = [];
+  // Match raw token (special regex chars escaped)
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(escaped, 'g');
-  return (s: string) => s.replace(re, '***');
+  patterns.push(new RegExp(escaped, 'g'));
+  // Also match URL-encoded token (e.g. '=' → '%3D') when different
+  const encoded = encodeURIComponent(token);
+  if (encoded !== token) {
+    const escapedEncoded = encoded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    patterns.push(new RegExp(escapedEncoded, 'g'));
+  }
+  return (s: string) => patterns.reduce((acc, re) => acc.replace(re, '***'), s);
 }
 
 // ── URL builder ───────────────────────────────────────────────────────────────

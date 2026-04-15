@@ -1,6 +1,6 @@
 {
   "name": "sbom-sentinel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Automated SBOM generation and vulnerability scanning for multiple repositories. Generates CycloneDX SBOMs, scans with Trivy, and notifies via Slack/email.",
   "type": "module",
   "main": "dist/index.js",

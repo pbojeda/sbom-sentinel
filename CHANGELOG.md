@@ -9,12 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.2.0] — 2026-04-15
+
 ### Added
 
 - **Token expiry warnings** — add a `tokenExpiry` map in the config file (token name → `YYYY-MM-DD`) to receive proactive alerts before credentials expire. When any token is within 15 days of its configured expiry date sbom-sentinel logs a warning to the console and sends a notification via all enabled channels (Slack, email). Already-expired tokens are flagged as `EXPIRED`. The `--dry-run` command displays the remaining days for every configured token.
 - **Per-platform private repository authentication** — repos can now be marked `"private": true`. sbom-sentinel validates that the required token is present at startup and fails with a clear error message before any clone is attempted.
 - **Per-repo token support** — `BITBUCKET_TOKEN_<REPO_NAME>`, `GITHUB_TOKEN_<REPO_NAME>`, and `GIT_TOKEN_<REPO_NAME>` allow a different token per repository. The `<REPO_NAME>` suffix is the uppercased `name` field from the config (hyphens and special characters replaced by `_`). Per-repo tokens take priority over the shared platform token, which falls back to `GIT_TOKEN`. This is the recommended approach for Bitbucket free accounts, which can only create repository-level HTTP access tokens.
 - For Bitbucket per-repo tokens (created via repo → Settings → Security → Access tokens), the username is always `x-token-auth` — no `BITBUCKET_USER` needed.
+
+### Fixed
+
+- **Token sanitizer now covers URL-encoded tokens** — tokens containing `=` (and other characters encoded by `encodeURIComponent`) were visible in plain text in error log messages because the sanitizer regex only matched the raw token string. The sanitizer now also matches the URL-encoded form, ensuring credentials are never exposed in logs regardless of token format.
+- **SBOM output path now resolved to absolute before invoking cdxgen** — when cdxgen ran with `cwd` set to the cloned repository directory, a relative output path was resolved against that directory instead of the project root, causing cdxgen to silently write nowhere and the SBOM to never be generated. The path is now converted to absolute with `path.resolve()` before being passed to cdxgen.
 
 ---
 
@@ -45,5 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full unit test suite with Vitest (121 tests, zero external tool calls in tests)
 - Examples: Docker, Kubernetes CronJob, GitHub Actions, Bitbucket Pipelines
 
-[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pbojeda/sbom-sentinel/releases/tag/v0.1.0

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { run, log, ok, warn } from './logger.js';
 import type { RepoConfig } from './types.js';
 
@@ -86,7 +86,10 @@ export function generateSbom(
 function runCdxgen(repo: RepoConfig, localPath: string, sbomFile: string): void {
   // cdxgen must be installed globally or available in PATH.
   // The CLI `check` command verifies this at startup.
-  const cmd = `cdxgen -t ${repo.type} --spec-version 1.6 -o "${sbomFile}" "${localPath}"`;
+  // Use an absolute output path — sbomFile may be relative to process.cwd() but
+  // cdxgen runs with cwd=localPath, so a relative path would resolve incorrectly.
+  const absSbomFile = resolve(sbomFile);
+  const cmd = `cdxgen -t ${repo.type} --spec-version 1.6 -o "${absSbomFile}" "${localPath}"`;
   run(cmd, { cwd: localPath });
 }
 
