@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { notify, buildSlackMessage, buildEmailSubject } from '../../src/notify.js';
-import type { GlobalSummary } from '../../src/types.js';
+import {
+  notify,
+  notifyTokenExpiry,
+  buildSlackMessage,
+  buildEmailSubject,
+  buildTokenExpirySlackMessage,
+  buildTokenExpiryEmailBody,
+} from '../../src/notify.js';
+import type { GlobalSummary, TokenExpiryWarning } from '../../src/types.js';
 
 // ── Mock logger ───────────────────────────────────────────────────────────────
 
@@ -207,6 +214,101 @@ describe('buildSlackMessage', () => {
     const msg = buildSlackMessage(SUMMARY_ERRORS);
     expect(msg).toContain('my-broken-repo');
     expect(msg).toContain('authentication failed');
+  });
+});
+
+// ── buildTokenExpirySlackMessage ──────────────────────────────────────────────
+
+describe('buildTokenExpirySlackMessage', () => {
+  const expiring: TokenExpiryWarning = { tokenName: 'BITBUCKET_TOKEN', expiresOn: '2026-04-30', daysLeft: 10 };
+  const expired: TokenExpiryWarning  = { tokenName: 'GITHUB_TOKEN',    expiresOn: '2026-04-01', daysLeft: -5 };
+
+  it('includes TOKEN EXPIRY WARNING headline', () => {
+    expect(buildTokenExpirySlackMessage([expiring])).toContain('TOKEN EXPIRY WARNING');
+  });
+
+  it('shows days remaining for a token expiring soon', () => {
+    const msg = buildTokenExpirySlackMessage([expiring]);
+    expect(msg).toContain('BITBUCKET_TOKEN');
+    expect(msg).toContain('10');
+  });
+
+  it('marks an already-expired token as EXPIRED', () => {
+    const msg = buildTokenExpirySlackMessage([expired]);
+    expect(msg).toContain('EXPIRED');
+    expect(msg).toContain('GITHUB_TOKEN');
+  });
+
+  it('includes all tokens when multiple warnings are present', () => {
+    const msg = buildTokenExpirySlackMessage([expiring, expired]);
+    expect(msg).toContain('BITBUCKET_TOKEN');
+    expect(msg).toContain('GITHUB_TOKEN');
+  });
+
+  it('includes a call to action', () => {
+    expect(buildTokenExpirySlackMessage([expiring])).toContain('tokenExpiry');
+  });
+});
+
+// ── buildTokenExpiryEmailBody ─────────────────────────────────────────────────
+
+describe('buildTokenExpiryEmailBody', () => {
+  const expiring: TokenExpiryWarning = { tokenName: 'BITBUCKET_TOKEN', expiresOn: '2026-04-30', daysLeft: 10 };
+  const expired: TokenExpiryWarning  = { tokenName: 'GITHUB_TOKEN',    expiresOn: '2026-04-01', daysLeft: -5 };
+
+  it('includes the token name', () => {
+    expect(buildTokenExpiryEmailBody([expiring])).toContain('BITBUCKET_TOKEN');
+  });
+
+  it('shows "EXPIRED" for past tokens', () => {
+    expect(buildTokenExpiryEmailBody([expired])).toContain('EXPIRED');
+  });
+
+  it('includes the expiry date', () => {
+    expect(buildTokenExpiryEmailBody([expiring])).toContain('2026-04-30');
+  });
+});
+
+// ── notifyTokenExpiry — Slack ─────────────────────────────────────────────────
+
+describe('notifyTokenExpiry — Slack', () => {
+  const warnings: TokenExpiryWarning[] = [
+    { tokenName: 'BITBUCKET_TOKEN', expiresOn: '2026-04-30', daysLeft: 10 },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch.mockResolvedValue({ ok: true, status: 200, statusText: 'OK' });
+  });
+
+  it('sends to Slack when webhook is configured', async () => {
+    await notifyTokenExpiry(warnings, { slackWebhookUrl: WEBHOOK_URL });
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it('does not send when no webhook is configured', async () => {
+    await notifyTokenExpiry(warnings, {});
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('respects slack.enabled: false', async () => {
+    await notifyTokenExpiry(warnings, {
+      slackWebhookUrl: WEBHOOK_URL,
+      notifications: { slack: { enabled: false } },
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('sends a message containing TOKEN EXPIRY WARNING', async () => {
+    await notifyTokenExpiry(warnings, { slackWebhookUrl: WEBHOOK_URL });
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string) as { text: string };
+    expect(body.text).toContain('TOKEN EXPIRY WARNING');
+  });
+
+  it('does not throw on network failure', async () => {
+    mockFetch.mockRejectedValue(new Error('Network error'));
+    await expect(notifyTokenExpiry(warnings, { slackWebhookUrl: WEBHOOK_URL })).resolves.not.toThrow();
   });
 });
 

@@ -4,6 +4,7 @@ export interface SentinelConfig {
   outputDir?: string;
   notifications?: NotificationConfig;
   repos: RepoConfig[];
+  tokenExpiry?: Record<string, string>;
 }
 
 export interface NotificationConfig {
@@ -90,4 +91,10 @@ export interface RepoSummary {
   counts: SeverityCounts;
   error: boolean;
   findingsCount: number;
+}
+
+export interface TokenExpiryWarning {
+  tokenName: string;
+  expiresOn: string;   // "YYYY-MM-DD"
+  daysLeft: number;    // negative means already expired
 }

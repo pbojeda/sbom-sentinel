@@ -1,7 +1,7 @@
 import { warn, err, ok } from './logger.js';
 import { generateText } from './report.js';
 import { SEVERITY_ORDER } from './types.js';
-import type { GlobalSummary } from './types.js';
+import type { GlobalSummary, TokenExpiryWarning } from './types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ export async function notify(summary: GlobalSummary, config: NotifyConfig): Prom
 
   // Slack — native fetch (Node 20), no extra dependencies
   if (notifCfg.slack?.enabled !== false && config.slackWebhookUrl) {
-    tasks.push(sendSlack(config.slackWebhookUrl, summary));
+    tasks.push(sendSlack(config.slackWebhookUrl, buildSlackMessage(summary)));
   }
 
   // Email — optional nodemailer
@@ -51,17 +51,86 @@ export async function notify(summary: GlobalSummary, config: NotifyConfig): Prom
     (config.emailTo?.length ?? 0) > 0;
 
   if (emailEnabled) {
-    tasks.push(sendEmail(summary, config));
+    tasks.push(sendEmailRaw(buildEmailSubject(summary), buildEmailBody(summary), config));
   }
 
   await Promise.all(tasks);
 }
 
+// ── Token expiry notifications ─────────────────────────────────────────────────
+
+/**
+ * Sends a token expiry warning via all configured channels (Slack, email).
+ * Called at the start of each scan when any token is within 15 days of expiry.
+ * Never throws — notification failures are logged and swallowed.
+ */
+export async function notifyTokenExpiry(
+  warnings: TokenExpiryWarning[],
+  config: NotifyConfig,
+): Promise<void> {
+  const tasks: Promise<void>[] = [];
+  const notifCfg = config.notifications ?? {};
+
+  if (notifCfg.slack?.enabled !== false && config.slackWebhookUrl) {
+    tasks.push(sendSlack(config.slackWebhookUrl, buildTokenExpirySlackMessage(warnings)));
+  }
+
+  const emailEnabled =
+    notifCfg.email?.enabled === true &&
+    !!config.smtpHost &&
+    (config.emailTo?.length ?? 0) > 0;
+
+  if (emailEnabled) {
+    const expired = warnings.filter((w) => w.daysLeft <= 0);
+    const subject =
+      expired.length > 0
+        ? '[SBOM Sentinel] Token(s) EXPIRED — action required'
+        : `[SBOM Sentinel] Token expiry warning — ${Math.min(...warnings.map((w) => w.daysLeft))} day(s) remaining`;
+    tasks.push(sendEmailRaw(subject, buildTokenExpiryEmailBody(warnings), config));
+  }
+
+  await Promise.all(tasks);
+}
+
+/**
+ * Builds the Slack message for token expiry warnings. Exported for testing.
+ */
+export function buildTokenExpirySlackMessage(warnings: TokenExpiryWarning[]): string {
+  const lines = ['*SBOM Sentinel — TOKEN EXPIRY WARNING*', ''];
+  for (const w of warnings) {
+    const status =
+      w.daysLeft <= 0
+        ? `*EXPIRED* on ${w.expiresOn}`
+        : `expires in *${w.daysLeft}* day(s) (${w.expiresOn})`;
+    lines.push(`• \`${w.tokenName}\` ${status}`);
+  }
+  lines.push('');
+  lines.push('Update the token and set the new expiry date in `tokenExpiry` in your configuration.');
+  return lines.join('\n');
+}
+
+/**
+ * Builds the plain-text email body for token expiry warnings. Exported for testing.
+ */
+export function buildTokenExpiryEmailBody(warnings: TokenExpiryWarning[]): string {
+  const lines = ['SBOM Sentinel — Token Expiry Warning', ''];
+  for (const w of warnings) {
+    const status =
+      w.daysLeft <= 0
+        ? `EXPIRED on ${w.expiresOn}`
+        : `expires in ${w.daysLeft} day(s) on ${w.expiresOn}`;
+    lines.push(`• ${w.tokenName}: ${status}`);
+  }
+  lines.push('');
+  lines.push(
+    'Update the affected token(s) and set the new expiry date in tokenExpiry in your sbom-sentinel.config.json.',
+  );
+  return lines.join('\n');
+}
+
 // ── Slack ─────────────────────────────────────────────────────────────────────
 
-async function sendSlack(webhookUrl: string, summary: GlobalSummary): Promise<void> {
-  const text = buildSlackMessage(summary);
-
+async function sendSlack(webhookUrl: string, text: string): Promise<void> {
   try {
     const res = await fetch(webhookUrl, {
       method: 'POST',
@@ -137,7 +206,11 @@ export function buildSlackMessage(summary: GlobalSummary): string {
 
 // ── Email ─────────────────────────────────────────────────────────────────────
 
-async function sendEmail(summary: GlobalSummary, config: NotifyConfig): Promise<void> {
+async function sendEmailRaw(
+  subject: string,
+  text: string,
+  config: NotifyConfig,
+): Promise<void> {
   // nodemailer is an optional dependency — attempt dynamic import
   let createTransport: (options: Record<string, unknown>) => {
     sendMail: (opts: Record<string, unknown>) => Promise<unknown>;
@@ -147,9 +220,7 @@ async function sendEmail(summary: GlobalSummary, config: NotifyConfig): Promise<
     const nm = await import('nodemailer') as { createTransport: typeof createTransport };
     createTransport = nm.createTransport;
   } catch {
-    warn(
-      'Email notifications require nodemailer. Install it with: npm install nodemailer',
-    );
+    warn('Email notifications require nodemailer. Install it with: npm install nodemailer');
     return;
   }
 
@@ -157,14 +228,10 @@ async function sendEmail(summary: GlobalSummary, config: NotifyConfig): Promise<
     host: config.smtpHost,
     port: config.smtpPort ?? 587,
     secure: (config.smtpPort ?? 587) === 465,
-    auth:
-      config.smtpUser
-        ? { user: config.smtpUser, pass: config.smtpPass }
-        : undefined,
+    auth: config.smtpUser
+      ? { user: config.smtpUser, pass: config.smtpPass }
+      : undefined,
   });
-
-  const subject = buildEmailSubject(summary);
-  const text = buildEmailBody(summary);
 
   try {
     await transporter.sendMail({
@@ -203,3 +270,4 @@ export function buildEmailSubject(summary: GlobalSummary): string {
 function buildEmailBody(summary: GlobalSummary): string {
   return generateText(summary);
 }
+

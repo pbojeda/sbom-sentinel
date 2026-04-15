@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Token expiry warnings** — add a `tokenExpiry` map in the config file (token name → `YYYY-MM-DD`) to receive proactive alerts before credentials expire. When any token is within 15 days of its configured expiry date sbom-sentinel logs a warning to the console and sends a notification via all enabled channels (Slack, email). Already-expired tokens are flagged as `EXPIRED`. The `--dry-run` command displays the remaining days for every configured token.
+- **Per-platform private repository authentication** — repos can now be marked `"private": true`. Platform-specific tokens (`GITHUB_TOKEN`, `BITBUCKET_TOKEN`) take priority over the generic `GIT_TOKEN` fallback. sbom-sentinel validates that the required token is present at startup and fails with a clear error message before any clone is attempted.
+- Support for Atlassian API tokens (the replacement for Bitbucket App Passwords since September 2025): set `BITBUCKET_TOKEN` to the API token and `BITBUCKET_USER` to your Atlassian account email.
+
 ---
 
 ## [0.1.0] — 2026-04-14

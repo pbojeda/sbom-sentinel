@@ -327,4 +327,20 @@ describe('loadConfig', () => {
     expect(result.config.repos[0].name).toBe('my-backend');
     rmSync(dir, { recursive: true });
   });
+
+  it('passes tokenExpiry from config file into SentinelConfig', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, {
+      repos: [VALID_REPO],
+      tokenExpiry: { BITBUCKET_TOKEN: '2027-04-15', GITHUB_TOKEN: '2027-06-01' },
+    });
+
+    const result = loadConfig([], dir);
+
+    expect(result.config.tokenExpiry).toEqual({
+      BITBUCKET_TOKEN: '2027-04-15',
+      GITHUB_TOKEN: '2027-06-01',
+    });
+    rmSync(dir, { recursive: true });
+  });
 });

@@ -19,6 +19,8 @@ Designed to run as a scheduled task (Kubernetes CronJob, cron, CI/CD pipeline) a
 - Consolidates results across all repositories into a single report
 - Generates reports in **JSON**, **HTML** (standalone, no external CSS) and **plain text**
 - Notifies via **Slack webhook** and/or **email** (SMTP) on CRITICAL/HIGH findings or scan errors
+- Supports **private repositories** on GitHub and Bitbucket with per-platform token validation at startup
+- Warns 15 days before a configured token expires and sends a notification via all enabled channels
 - Supports custom SBOM generation commands per repository (`mode: "command"`)
 - Zero npm runtime dependencies — native Node 20 fetch, no axios, no dotenv
 - Supports `node`, `swift`, `gradle`, `python`, `go`, `rust` ecosystems via cdxgen
@@ -150,7 +152,50 @@ Create `sbom-sentinel.config.json` in your working directory (or run `sbom-senti
 | `sbomCommand` | No | Shell command to generate the SBOM (required when `mode: "command"`) |
 | `sbomOutput` | No | Path to the SBOM file produced by `sbomCommand` (default: `bom.json`) |
 | `enabled` | No | Set to `false` to skip this repo without removing it from the config |
+| `private` | No | Set to `true` if the repo requires authentication. sbom-sentinel validates that the appropriate token is set before starting the scan |
 | `notes` | No | Free-text notes, ignored by the tool |
+
+### Private repositories
+
+Mark private repos with `"private": true`. sbom-sentinel validates that the appropriate token is set at startup — before any clone is attempted.
+
+Platform-specific tokens take priority over the generic `GIT_TOKEN`:
+
+| Platform | Token variable | User variable |
+|---|---|---|
+| github.com | `GITHUB_TOKEN` | `GITHUB_USER` (default: `x-token-auth`) |
+| bitbucket.org | `BITBUCKET_TOKEN` | `BITBUCKET_USER` (default: `x-token-auth`) |
+| Any other host | `GIT_TOKEN` | `GIT_USER` (default: `x-token-auth`) |
+
+For Bitbucket, generate an **Atlassian API token** at [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens) and use your Atlassian account email as `BITBUCKET_USER`.
+
+```bash
+BITBUCKET_TOKEN=<atlassian-api-token>
+BITBUCKET_USER=<your-atlassian-email>
+```
+
+For GitHub, a personal access token (classic or fine-grained with repository read access) works with the default `GITHUB_USER=x-token-auth`.
+
+### Token expiry warnings
+
+Tokens expire. Configure expiry dates so sbom-sentinel notifies you before they do:
+
+```json
+{
+  "tokenExpiry": {
+    "BITBUCKET_TOKEN": "2027-04-15",
+    "GITHUB_TOKEN": "2027-06-01"
+  }
+}
+```
+
+**Behaviour:**
+- If a token expires within **15 days**: logs a warning to the console and sends a notification via all configured channels (Slack, email)
+- If a token has **already expired**: same — the notification marks it as `EXPIRED` with a prompt to renew
+- Tokens beyond the 15-day window: shown in `--dry-run` output with days remaining, no notification sent
+- Invalid date strings are silently skipped
+
+The `--dry-run` command shows the status of all configured token expiry dates without executing any scans.
 
 ### Environment variables
 
@@ -158,8 +203,12 @@ All credentials and sensitive settings are passed via environment variables. The
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GIT_TOKEN` | Yes | — | Token for cloning repos. Works with GitHub, GitLab, Bitbucket App Passwords |
-| `GIT_USER` | No | `x-token-auth` | Git username. Use `x-token-auth` for GitHub tokens, your username for Bitbucket |
+| `GITHUB_TOKEN` | * | — | Token for github.com repositories (takes priority over `GIT_TOKEN`) |
+| `GITHUB_USER` | No | `x-token-auth` | Username for GitHub token auth |
+| `BITBUCKET_TOKEN` | * | — | Token for bitbucket.org repositories (takes priority over `GIT_TOKEN`) |
+| `BITBUCKET_USER` | * | `x-token-auth` | Username for Bitbucket token auth. Use your Atlassian email for API tokens |
+| `GIT_TOKEN` | * | — | Fallback token for any platform not covered above |
+| `GIT_USER` | No | `x-token-auth` | Fallback git username |
 | `SLACK_WEBHOOK_URL` | No | — | Slack incoming webhook URL |
 | `SMTP_HOST` | No | — | SMTP server hostname |
 | `SMTP_PORT` | No | `587` | SMTP port |
@@ -171,6 +220,8 @@ All credentials and sensitive settings are passed via environment variables. The
 | `SENTINEL_OUTPUT_DIR` | No | `./artifacts` | Output directory (overrides `outputDir` in config) |
 | `SENTINEL_REPO` | No | — | Scan only the named repository (overrides `--repo`) |
 | `LOG_LEVEL` | No | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+
+\* At least one token must be set for any private repository in the config.
 
 ### Configuration priority
 

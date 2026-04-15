@@ -7,10 +7,10 @@ import { generateSbom } from './sbom.js';
 import { scanSbom } from './scanner.js';
 import { buildSummary, generateReports } from './report.js';
 import type { ReportFiles } from './report.js';
-import { notify } from './notify.js';
+import { notify, notifyTokenExpiry } from './notify.js';
 import type { NotifyConfig } from './notify.js';
 import type { LoadedConfig } from './config.js';
-import type { RepoResult, GlobalSummary } from './types.js';
+import type { RepoResult, GlobalSummary, TokenExpiryWarning } from './types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -41,6 +41,34 @@ export interface RunResult {
 export async function scan(config: LoadedConfig): Promise<RunResult> {
   if (config.dryRun) {
     return executeDryRun(config);
+  }
+
+  const notifyConfig: NotifyConfig = {
+    slackWebhookUrl: config.slackWebhookUrl,
+    smtpHost: config.smtpHost,
+    smtpPort: config.smtpPort,
+    smtpUser: config.smtpUser,
+    smtpPass: config.smtpPass,
+    emailFrom: config.emailFrom,
+    emailTo: config.emailTo,
+    notifications: config.config.notifications,
+  };
+
+  // ── 0. Token expiry check ──────────────────────────────────────────────────
+
+  const tokenExpiry = config.config.tokenExpiry ?? {};
+  if (Object.keys(tokenExpiry).length > 0) {
+    const expiryWarnings = checkTokenExpiry(tokenExpiry, new Date());
+    if (expiryWarnings.length > 0) {
+      for (const w of expiryWarnings) {
+        warn(
+          w.daysLeft <= 0
+            ? `Token "${w.tokenName}" has EXPIRED (${w.expiresOn}) — update it to avoid authentication failures.`
+            : `Token "${w.tokenName}" expires in ${w.daysLeft} day(s) (${w.expiresOn}).`,
+        );
+      }
+      await notifyTokenExpiry(expiryWarnings, notifyConfig);
+    }
   }
 
   // ── 1. Tool check ──────────────────────────────────────────────────────────
@@ -122,17 +150,6 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
 
   // ── 7. Notify ──────────────────────────────────────────────────────────────
 
-  const notifyConfig: NotifyConfig = {
-    slackWebhookUrl: config.slackWebhookUrl,
-    smtpHost: config.smtpHost,
-    smtpPort: config.smtpPort,
-    smtpUser: config.smtpUser,
-    smtpPass: config.smtpPass,
-    emailFrom: config.emailFrom,
-    emailTo: config.emailTo,
-    notifications: config.config.notifications,
-  };
-
   await notify(globalSummary, notifyConfig);
 
   // ── 8. Exit code ───────────────────────────────────────────────────────────
@@ -196,6 +213,29 @@ export function checkExternalTools(): void {
   }
 }
 
+// ── Token expiry check ────────────────────────────────────────────────────────
+
+/**
+ * Returns warnings for tokens that expire within 15 days (or have already expired).
+ * Tokens with invalid date strings are silently skipped.
+ * Exported for testing.
+ */
+export function checkTokenExpiry(
+  tokenExpiry: Record<string, string>,
+  now: Date,
+): TokenExpiryWarning[] {
+  const warnings: TokenExpiryWarning[] = [];
+  for (const [tokenName, expiresOnStr] of Object.entries(tokenExpiry)) {
+    const expiresOn = new Date(expiresOnStr + 'T00:00:00Z');
+    if (isNaN(expiresOn.getTime())) continue;
+    const daysLeft = Math.ceil((expiresOn.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysLeft <= 15) {
+      warnings.push({ tokenName, expiresOn: expiresOnStr, daysLeft });
+    }
+  }
+  return warnings;
+}
+
 // ── Dry-run ───────────────────────────────────────────────────────────────────
 
 function executeDryRun(config: LoadedConfig): RunResult {
@@ -212,6 +252,24 @@ function executeDryRun(config: LoadedConfig): RunResult {
   log(`Bitbucket token      : ${!!config.bitbucketToken}`);
   log(`Slack webhook        : ${config.slackWebhookUrl ? 'configured' : 'not set'}`);
   log(`Email recipients     : ${config.emailTo.length > 0 ? config.emailTo.join(', ') : 'not set'}`);
+
+  const tokenExpiry = config.config.tokenExpiry ?? {};
+  if (Object.keys(tokenExpiry).length > 0) {
+    log(`\nToken expiry:`);
+    const now = new Date();
+    for (const [name, date] of Object.entries(tokenExpiry)) {
+      const expiresOn = new Date(date + 'T00:00:00Z');
+      const daysLeft = isNaN(expiresOn.getTime())
+        ? null
+        : Math.ceil((expiresOn.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      const status =
+        daysLeft === null ? 'invalid date' :
+        daysLeft <= 0    ? 'EXPIRED' :
+        daysLeft <= 15   ? `WARNING — ${daysLeft}d remaining` :
+        `${daysLeft}d remaining`;
+      log(`  ${name.padEnd(24)} ${date}  (${status})`);
+    }
+  }
 
   const summary = buildSummary([], new Date());
   return { summary, reports: { json: '', html: '', txt: '' }, exitCode: 0 };
