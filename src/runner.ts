@@ -2,7 +2,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { log, ok, warn, err, dim, run } from './logger.js';
-import { cloneRepo, cleanupRepo } from './git.js';
+import { cloneRepo, cleanupRepo, detectPlatform } from './git.js';
 import { generateSbom } from './sbom.js';
 import { scanSbom } from './scanner.js';
 import { buildSummary, generateReports } from './report.js';
@@ -76,7 +76,8 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
 
     try {
       // Clone
-      const { commitSha, localPath } = cloneRepo(repo, workDir, config.gitToken, config.gitUser);
+      const { token, user } = resolveCredentials(repo.cloneUrl, config);
+      const { commitSha, localPath } = cloneRepo(repo, workDir, token, user);
       result.commitSha = commitSha;
 
       // Generate SBOM
@@ -205,17 +206,36 @@ function executeDryRun(config: LoadedConfig): RunResult {
     log(`  ${repo.name.padEnd(28)} branch=${repo.branch}  type=${repo.type}  mode=${repo.mode ?? 'cdxgen'}`);
   }
 
-  log(`\nOutput directory : ${config.outputDir}`);
-  log(`Git user         : ${config.gitUser}`);
-  log(`Git token set    : ${!!config.gitToken}`);
-  log(`Slack webhook    : ${config.slackWebhookUrl ? 'configured' : 'not set'}`);
-  log(`Email recipients : ${config.emailTo.length > 0 ? config.emailTo.join(', ') : 'not set'}`);
+  log(`\nOutput directory     : ${config.outputDir}`);
+  log(`Git token (generic)  : ${!!config.gitToken}`);
+  log(`GitHub token         : ${!!config.githubToken}`);
+  log(`Bitbucket token      : ${!!config.bitbucketToken}`);
+  log(`Slack webhook        : ${config.slackWebhookUrl ? 'configured' : 'not set'}`);
+  log(`Email recipients     : ${config.emailTo.length > 0 ? config.emailTo.join(', ') : 'not set'}`);
 
   const summary = buildSummary([], new Date());
   return { summary, reports: { json: '', html: '', txt: '' }, exitCode: 0 };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Picks the right token/user for a repo based on its hosting platform.
+ * Platform-specific vars take priority; falls back to the generic GIT_TOKEN/GIT_USER.
+ */
+function resolveCredentials(
+  cloneUrl: string,
+  config: LoadedConfig,
+): { token: string; user: string } {
+  const platform = detectPlatform(cloneUrl);
+  if (platform === 'github' && config.githubToken) {
+    return { token: config.githubToken, user: config.githubUser };
+  }
+  if (platform === 'bitbucket' && config.bitbucketToken) {
+    return { token: config.bitbucketToken, user: config.bitbucketUser };
+  }
+  return { token: config.gitToken, user: config.gitUser };
+}
 
 function formatCounts(counts: { CRITICAL: number; HIGH: number; MEDIUM: number; LOW: number }): string {
   return (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const)

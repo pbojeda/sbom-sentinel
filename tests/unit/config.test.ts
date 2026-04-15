@@ -26,7 +26,8 @@ function writeConfigFile(dir: string, content: unknown, filename = 'sbom-sentine
 // ── Env var isolation ─────────────────────────────────────────────────────────
 
 const ENV_KEYS = [
-  'GIT_TOKEN', 'GIT_USER', 'SLACK_WEBHOOK_URL', 'SMTP_HOST', 'SMTP_PORT',
+  'GIT_TOKEN', 'GIT_USER', 'GITHUB_TOKEN', 'GITHUB_USER', 'BITBUCKET_TOKEN', 'BITBUCKET_USER',
+  'SLACK_WEBHOOK_URL', 'SMTP_HOST', 'SMTP_PORT',
   'SMTP_USER', 'SMTP_PASS', 'EMAIL_FROM', 'EMAIL_TO', 'SENTINEL_CONFIG',
   'SENTINEL_OUTPUT_DIR', 'SENTINEL_REPO', 'LOG_LEVEL',
 ];
@@ -243,6 +244,64 @@ describe('loadConfig', () => {
     const result = loadConfig(['--repo', 'my-backend'], dir);
 
     expect(result.config.repos[0].name).toBe('env-repo');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('loads GITHUB_TOKEN and BITBUCKET_TOKEN from env', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['GITHUB_TOKEN'] = 'gh-token';
+    process.env['GITHUB_USER'] = 'myuser';
+    process.env['BITBUCKET_TOKEN'] = 'bb-token';
+    process.env['BITBUCKET_USER'] = 'bbuser';
+
+    const result = loadConfig([], dir);
+
+    expect(result.githubToken).toBe('gh-token');
+    expect(result.githubUser).toBe('myuser');
+    expect(result.bitbucketToken).toBe('bb-token');
+    expect(result.bitbucketUser).toBe('bbuser');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when a private GitHub repo has no GITHUB_TOKEN or GIT_TOKEN', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, {
+      repos: [{ ...VALID_REPO, private: true }],
+    });
+
+    expect(() => loadConfig([], dir)).toThrow(/GITHUB_TOKEN \(or GIT_TOKEN\)/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when a private Bitbucket repo has no BITBUCKET_TOKEN or GIT_TOKEN', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, {
+      repos: [{
+        ...VALID_REPO,
+        cloneUrl: 'https://bitbucket.org/myorg/my-repo.git',
+        private: true,
+      }],
+    });
+
+    expect(() => loadConfig([], dir)).toThrow(/BITBUCKET_TOKEN \(or GIT_TOKEN\)/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('does not throw when a private repo has the generic GIT_TOKEN as fallback', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [{ ...VALID_REPO, private: true }] });
+    process.env['GIT_TOKEN'] = 'fallback-token';
+
+    expect(() => loadConfig([], dir)).not.toThrow();
+    rmSync(dir, { recursive: true });
+  });
+
+  it('does not throw when a non-private repo has no token configured', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] }); // private not set → defaults to false
+
+    expect(() => loadConfig([], dir)).not.toThrow();
     rmSync(dir, { recursive: true });
   });
 

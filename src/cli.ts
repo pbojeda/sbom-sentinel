@@ -28,8 +28,11 @@ Global options:
   --help, -h         Show this help message
 
 Environment variables:
-  GIT_TOKEN          Required — token for cloning repositories
-  GIT_USER           Git username (default: x-token-auth)
+  GITHUB_TOKEN       Token for github.com repositories (takes priority over GIT_TOKEN)
+  BITBUCKET_TOKEN    Token for bitbucket.org repositories (takes priority over GIT_TOKEN)
+  BITBUCKET_USER     Bitbucket username (default: x-token-auth)
+  GIT_TOKEN          Fallback token for any platform not covered above
+  GIT_USER           Fallback git username (default: x-token-auth)
   SLACK_WEBHOOK_URL  Slack webhook for notifications
   SMTP_HOST          SMTP server for email notifications
   SENTINEL_CONFIG    Path to config file (overrides --config)

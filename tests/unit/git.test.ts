@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { makeSanitizer, buildCloneUrl, cloneRepo, cleanupRepo } from '../../src/git.js';
+import { makeSanitizer, buildCloneUrl, cloneRepo, cleanupRepo, detectPlatform } from '../../src/git.js';
 import type { RepoConfig } from '../../src/types.js';
 
 // ── Mock logger so no shell commands actually run ─────────────────────────────
@@ -197,6 +197,26 @@ describe('cloneRepo', () => {
 
     const [cloneCmd] = mockRun.mock.calls[0] as [string, ...unknown[]];
     expect(cloneCmd).toContain('x-token-auth:mytoken@');
+  });
+});
+
+// ── detectPlatform ────────────────────────────────────────────────────────────
+
+describe('detectPlatform', () => {
+  it('returns github for github.com URLs', () => {
+    expect(detectPlatform('https://github.com/org/repo.git')).toBe('github');
+    expect(detectPlatform('https://github.com/user/private-repo.git')).toBe('github');
+  });
+
+  it('returns bitbucket for bitbucket.org URLs', () => {
+    expect(detectPlatform('https://bitbucket.org/org/repo.git')).toBe('bitbucket');
+    expect(detectPlatform('https://bitbucket.org/myteam/my-service.git')).toBe('bitbucket');
+  });
+
+  it('returns other for unknown hosts', () => {
+    expect(detectPlatform('https://gitlab.com/org/repo.git')).toBe('other');
+    expect(detectPlatform('https://my-gitea.internal/org/repo.git')).toBe('other');
+    expect(detectPlatform('https://dev.azure.com/org/repo.git')).toBe('other');
   });
 });
 

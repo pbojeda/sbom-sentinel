@@ -88,7 +88,7 @@
         "cloneUrl": {
           "type": "string",
           "format": "uri",
-          "description": "HTTPS URL used to clone the repository. Credentials are injected via GIT_TOKEN and GIT_USER environment variables.",
+          "description": "HTTPS URL used to clone the repository. For private repositories mark the repo with `\"private\": true` and set GITHUB_TOKEN, BITBUCKET_TOKEN, or GIT_TOKEN as appropriate.",
           "examples": [
             "https://github.com/myorg/my-backend.git",
             "https://bitbucket.org/myorg/my-repo.git",
@@ -132,6 +132,11 @@
           "type": "boolean",
           "description": "Set to false to skip this repository without removing it from the config.",
           "default": true
+        },
+        "private": {
+          "type": "boolean",
+          "description": "Set to true if this repository requires authentication to clone. sbom-sentinel will verify that the appropriate token (GITHUB_TOKEN, BITBUCKET_TOKEN, or GIT_TOKEN) is configured before starting the scan.",
+          "default": false
         },
         "notes": {
           "type": "string",

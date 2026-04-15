@@ -43,6 +43,11 @@ jobs:
 
       - name: Run scan
         env:
+          # Platform-specific tokens (take priority over GIT_TOKEN)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BITBUCKET_TOKEN: ${{ secrets.BITBUCKET_TOKEN }}
+          BITBUCKET_USER: ${{ secrets.BITBUCKET_USER }}
+          # Fallback token for other platforms or mixed setups
           GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}

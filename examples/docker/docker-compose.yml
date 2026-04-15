@@ -7,9 +7,13 @@ services:
     command: scan
     working_dir: /app
     environment:
-      # Required — token for cloning repositories
-      GIT_TOKEN: ${GIT_TOKEN}
-      # Optional — Git username (default: x-token-auth)
+      # Platform-specific tokens (take priority over GIT_TOKEN)
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_USER: ${GITHUB_USER:-x-token-auth}
+      BITBUCKET_TOKEN: ${BITBUCKET_TOKEN:-}
+      BITBUCKET_USER: ${BITBUCKET_USER:-x-token-auth}
+      # Fallback token for other platforms or mixed setups
+      GIT_TOKEN: ${GIT_TOKEN:-}
       GIT_USER: ${GIT_USER:-x-token-auth}
       # Optional — Slack webhook for notifications
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}

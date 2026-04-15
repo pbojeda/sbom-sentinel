@@ -1,7 +1,10 @@
 # Bitbucket Pipelines — SBOM Sentinel
 #
 # Required repository variables (Settings > Pipelines > Repository variables):
-#   GIT_TOKEN           — token for cloning repositories
+#   BITBUCKET_TOKEN     — App Password or Repository Access Token for bitbucket.org repos
+#   BITBUCKET_USER      — your Bitbucket username
+#   GITHUB_TOKEN        — (optional) Personal Access Token for github.com repos
+#   GIT_TOKEN           — (optional) fallback token for other platforms
 #   SLACK_WEBHOOK_URL   — (optional) Slack webhook for notifications
 #
 # Schedule configuration:

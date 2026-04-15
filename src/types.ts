@@ -23,6 +23,7 @@ export interface RepoConfig {
   sbomCommand?: string;
   sbomOutput?: string;
   enabled?: boolean;
+  private?: boolean;
   notes?: string;
 }
 

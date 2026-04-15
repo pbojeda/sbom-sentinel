@@ -39,7 +39,8 @@
       "name": "my-android-app",
       "cloneUrl": "https://bitbucket.org/myorg/my-android-app.git",
       "branch": "main",
-      "type": "gradle"
+      "type": "gradle",
+      "private": true
     },
     {
       "name": "my-ios-app",

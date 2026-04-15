@@ -8,6 +8,20 @@ export interface CloneResult {
   localPath: string;
 }
 
+// ── Platform detection ────────────────────────────────────────────────────────
+
+export type GitPlatform = 'github' | 'bitbucket' | 'other';
+
+/**
+ * Detects the hosting platform from a clone URL.
+ * Returns 'github', 'bitbucket', or 'other' for everything else (GitLab, self-hosted, etc.).
+ */
+export function detectPlatform(cloneUrl: string): GitPlatform {
+  if (cloneUrl.includes('github.com')) return 'github';
+  if (cloneUrl.includes('bitbucket.org')) return 'bitbucket';
+  return 'other';
+}
+
 // ── Credential sanitizer ──────────────────────────────────────────────────────
 
 /**
