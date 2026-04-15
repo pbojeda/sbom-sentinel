@@ -159,22 +159,54 @@ Create `sbom-sentinel.config.json` in your working directory (or run `sbom-senti
 
 Mark private repos with `"private": true`. sbom-sentinel validates that the appropriate token is set at startup — before any clone is attempted.
 
-Platform-specific tokens take priority over the generic `GIT_TOKEN`:
+#### Token resolution order (highest to lowest priority)
 
-| Platform | Token variable | User variable |
-|---|---|---|
-| github.com | `GITHUB_TOKEN` | `GITHUB_USER` (default: `x-token-auth`) |
-| bitbucket.org | `BITBUCKET_TOKEN` | `BITBUCKET_USER` (default: `x-token-auth`) |
-| Any other host | `GIT_TOKEN` | `GIT_USER` (default: `x-token-auth`) |
+| Priority | Variable | Platform | Username |
+|---|---|---|---|
+| 1 | `BITBUCKET_TOKEN_<REPO_NAME>` | bitbucket.org | `x-token-auth` |
+| 1 | `GITHUB_TOKEN_<REPO_NAME>` | github.com | `GITHUB_USER` |
+| 1 | `GIT_TOKEN_<REPO_NAME>` | other hosts | `GIT_USER` |
+| 2 | `BITBUCKET_TOKEN` | bitbucket.org | `BITBUCKET_USER` |
+| 2 | `GITHUB_TOKEN` | github.com | `GITHUB_USER` |
+| 3 | `GIT_TOKEN` | any | `GIT_USER` |
 
-For Bitbucket, generate an **Atlassian API token** at [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens) and use your Atlassian account email as `BITBUCKET_USER`.
+`<REPO_NAME>` is derived from the `name` field in the config: uppercased, with non-alphanumeric characters replaced by `_`. For example `my-backend` → `MY_BACKEND`.
+
+#### Bitbucket (free accounts — per-repo tokens)
+
+Free Bitbucket accounts cannot create workspace-level tokens. Create a **Repository HTTP access token** for each repo (repo → Settings → Security → Access tokens, permission: Repository Read):
 
 ```bash
-BITBUCKET_TOKEN=<atlassian-api-token>
-BITBUCKET_USER=<your-atlassian-email>
+# In your .env — one entry per private Bitbucket repo
+BITBUCKET_TOKEN_MY_BACKEND=ATBB...
+BITBUCKET_TOKEN_MY_FRONTEND=ATBB...
+BITBUCKET_TOKEN_MY_SERVICE=ATBB...
 ```
 
-For GitHub, a personal access token (classic or fine-grained with repository read access) works with the default `GITHUB_USER=x-token-auth`.
+No `BITBUCKET_USER` needed for per-repo tokens — the username is always `x-token-auth`.
+
+#### Bitbucket (workspace token — paid plans)
+
+If your plan supports workspace-level tokens, one token covers all repos in the workspace:
+
+```bash
+BITBUCKET_TOKEN=ATBB...
+BITBUCKET_USER=x-token-auth
+```
+
+#### GitHub
+
+A personal access token (classic or fine-grained with repository read access) works with the default `GITHUB_USER=x-token-auth`:
+
+```bash
+GITHUB_TOKEN=ghp_...
+```
+
+For per-repo GitHub tokens (fine-grained PATs scoped to a single repo):
+
+```bash
+GITHUB_TOKEN_MY_BACKEND=github_pat_...
+```
 
 ### Token expiry warnings
 
@@ -203,10 +235,13 @@ All credentials and sensitive settings are passed via environment variables. The
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GITHUB_TOKEN` | * | — | Token for github.com repositories (takes priority over `GIT_TOKEN`) |
+| `GITHUB_TOKEN_<REPO>` | * | — | Per-repo GitHub token (highest priority for github.com repos) |
+| `GITHUB_TOKEN` | * | — | Shared token for all github.com repositories |
 | `GITHUB_USER` | No | `x-token-auth` | Username for GitHub token auth |
-| `BITBUCKET_TOKEN` | * | — | Token for bitbucket.org repositories (takes priority over `GIT_TOKEN`) |
-| `BITBUCKET_USER` | * | `x-token-auth` | Username for Bitbucket token auth. Use your Atlassian email for API tokens |
+| `BITBUCKET_TOKEN_<REPO>` | * | — | Per-repo Bitbucket token; `<REPO>` is the uppercased repo name (e.g. `MY_BACKEND`) |
+| `BITBUCKET_TOKEN` | * | — | Shared token for all bitbucket.org repositories |
+| `BITBUCKET_USER` | No | `x-token-auth` | Username for shared Bitbucket token |
+| `GIT_TOKEN_<REPO>` | * | — | Per-repo generic token for other hosts |
 | `GIT_TOKEN` | * | — | Fallback token for any platform not covered above |
 | `GIT_USER` | No | `x-token-auth` | Fallback git username |
 | `SLACK_WEBHOOK_URL` | No | — | Slack incoming webhook URL |

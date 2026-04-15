@@ -28,16 +28,20 @@ Global options:
   --help, -h         Show this help message
 
 Environment variables:
-  GITHUB_TOKEN       Token for github.com repositories (takes priority over GIT_TOKEN)
-  BITBUCKET_TOKEN    Token for bitbucket.org repositories (takes priority over GIT_TOKEN)
-  BITBUCKET_USER     Bitbucket username (default: x-token-auth)
-  GIT_TOKEN          Fallback token for any platform not covered above
-  GIT_USER           Fallback git username (default: x-token-auth)
-  SLACK_WEBHOOK_URL  Slack webhook for notifications
-  SMTP_HOST          SMTP server for email notifications
-  SENTINEL_CONFIG    Path to config file (overrides --config)
-  SENTINEL_OUTPUT_DIR Output directory (default: ./artifacts)
-  LOG_LEVEL          debug | info | warn | error (default: info)
+  GITHUB_TOKEN              Token for github.com repos (priority over GIT_TOKEN)
+  GITHUB_TOKEN_<REPO_NAME>  Per-repo GitHub token (priority over GITHUB_TOKEN)
+  BITBUCKET_TOKEN           Token for bitbucket.org repos (priority over GIT_TOKEN)
+  BITBUCKET_USER            Bitbucket username (default: x-token-auth)
+  BITBUCKET_TOKEN_<REPO_NAME>  Per-repo Bitbucket token, uses x-token-auth username
+                            e.g. BITBUCKET_TOKEN_MY_BACKEND for repo "my-backend"
+  GIT_TOKEN                 Fallback token for any platform not covered above
+  GIT_TOKEN_<REPO_NAME>     Per-repo generic token (priority over GIT_TOKEN)
+  GIT_USER                  Fallback git username (default: x-token-auth)
+  SLACK_WEBHOOK_URL         Slack webhook for notifications
+  SMTP_HOST                 SMTP server for email notifications
+  SENTINEL_CONFIG           Path to config file (overrides --config)
+  SENTINEL_OUTPUT_DIR       Output directory (default: ./artifacts)
+  LOG_LEVEL                 debug | info | warn | error (default: info)
 
 Examples:
   sbom-sentinel scan

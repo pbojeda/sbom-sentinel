@@ -264,13 +264,29 @@ describe('loadConfig', () => {
     rmSync(dir, { recursive: true });
   });
 
+  it('does not throw when a private Bitbucket repo has a per-repo BITBUCKET_TOKEN_<REPO_NAME>', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, {
+      repos: [{
+        ...VALID_REPO,
+        cloneUrl: 'https://bitbucket.org/myorg/my-backend.git',
+        private: true,
+      }],
+    });
+    process.env['BITBUCKET_TOKEN_MY_BACKEND'] = 'per-repo-token';
+
+    expect(() => loadConfig([], dir)).not.toThrow();
+    delete process.env['BITBUCKET_TOKEN_MY_BACKEND'];
+    rmSync(dir, { recursive: true });
+  });
+
   it('throws when a private GitHub repo has no GITHUB_TOKEN or GIT_TOKEN', () => {
     const dir = makeTempDir();
     writeConfigFile(dir, {
       repos: [{ ...VALID_REPO, private: true }],
     });
 
-    expect(() => loadConfig([], dir)).toThrow(/GITHUB_TOKEN \(or GIT_TOKEN\)/);
+    expect(() => loadConfig([], dir)).toThrow(/GITHUB_TOKEN/);
     rmSync(dir, { recursive: true });
   });
 
@@ -284,7 +300,7 @@ describe('loadConfig', () => {
       }],
     });
 
-    expect(() => loadConfig([], dir)).toThrow(/BITBUCKET_TOKEN \(or GIT_TOKEN\)/);
+    expect(() => loadConfig([], dir)).toThrow(/BITBUCKET_TOKEN/);
     rmSync(dir, { recursive: true });
   });
 

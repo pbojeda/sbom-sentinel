@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
-import { checkTokenExpiry } from '../../src/runner.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { checkTokenExpiry, resolveCredentials } from '../../src/runner.js';
+import type { LoadedConfig } from '../../src/config.js';
+import type { RepoConfig } from '../../src/types.js';
 
-// ── checkTokenExpiry ──────────────────────────────────────────────────────────
+// ── Mocks ─────────────────────────────────────────────────────────────────────
 
 vi.mock('../../src/logger.js', () => ({
   ok:   vi.fn(),
@@ -12,17 +14,128 @@ vi.mock('../../src/logger.js', () => ({
   run:  vi.fn(),
 }));
 
-vi.mock('../../src/git.js', () => ({
-  cloneRepo:        vi.fn(),
-  cleanupRepo:      vi.fn(),
-  detectPlatform:   vi.fn(),
-  makeSanitizer:    vi.fn(() => (s: string) => s),
-}));
+vi.mock('../../src/git.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/git.js')>();
+  return {
+    ...actual,
+    cloneRepo:     vi.fn(),
+    cleanupRepo:   vi.fn(),
+  };
+});
 
 vi.mock('../../src/sbom.js',    () => ({ generateSbom:   vi.fn() }));
 vi.mock('../../src/scanner.js', () => ({ scanSbom:       vi.fn() }));
 vi.mock('../../src/report.js',  () => ({ buildSummary:   vi.fn(() => ({})), generateReports: vi.fn(() => ({})) }));
 vi.mock('../../src/notify.js',  () => ({ notify: vi.fn(), notifyTokenExpiry: vi.fn() }));
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function makeRepo(overrides: Partial<RepoConfig> = {}): RepoConfig {
+  return {
+    name: 'my-backend',
+    cloneUrl: 'https://github.com/org/my-backend.git',
+    branch: 'main',
+    type: 'node',
+    ...overrides,
+  };
+}
+
+function makeConfig(overrides: Partial<LoadedConfig> = {}): LoadedConfig {
+  return {
+    config: { repos: [] },
+    args: { dryRun: false },
+    outputDir: './artifacts',
+    gitToken: '',
+    gitUser: 'x-token-auth',
+    githubToken: '',
+    githubUser: 'x-token-auth',
+    bitbucketToken: '',
+    bitbucketUser: 'x-token-auth',
+    emailTo: [],
+    smtpPort: 587,
+    logLevel: 'info',
+    dryRun: false,
+    ...overrides,
+  } as LoadedConfig;
+}
+
+// ── resolveCredentials ────────────────────────────────────────────────────────
+
+describe('resolveCredentials', () => {
+  const savedEnv: Record<string, string | undefined> = {};
+  const PER_REPO_KEYS = [
+    'GITHUB_TOKEN_MY_BACKEND',
+    'BITBUCKET_TOKEN_MY_BACKEND',
+    'GIT_TOKEN_MY_BACKEND',
+    'BITBUCKET_TOKEN_MY_SERVICE',
+  ];
+
+  beforeEach(() => {
+    for (const key of PER_REPO_KEYS) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of PER_REPO_KEYS) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
+  });
+
+  it('uses BITBUCKET_TOKEN_<REPO_NAME> for Bitbucket repos (per-repo token)', () => {
+    process.env['BITBUCKET_TOKEN_MY_BACKEND'] = 'per-repo-token';
+    const repo = makeRepo({ cloneUrl: 'https://bitbucket.org/org/my-backend.git' });
+    const creds = resolveCredentials(repo, makeConfig({ bitbucketToken: 'shared-token' }));
+    expect(creds.token).toBe('per-repo-token');
+    expect(creds.user).toBe('x-token-auth');
+  });
+
+  it('falls back to BITBUCKET_TOKEN when no per-repo token is set', () => {
+    const repo = makeRepo({ cloneUrl: 'https://bitbucket.org/org/my-backend.git' });
+    const creds = resolveCredentials(repo, makeConfig({ bitbucketToken: 'shared-bb', bitbucketUser: 'myuser' }));
+    expect(creds.token).toBe('shared-bb');
+    expect(creds.user).toBe('myuser');
+  });
+
+  it('uses GITHUB_TOKEN_<REPO_NAME> for GitHub repos (per-repo token)', () => {
+    process.env['GITHUB_TOKEN_MY_BACKEND'] = 'per-repo-gh-token';
+    const repo = makeRepo({ cloneUrl: 'https://github.com/org/my-backend.git' });
+    const creds = resolveCredentials(repo, makeConfig({ githubToken: 'shared-gh', githubUser: 'x-token-auth' }));
+    expect(creds.token).toBe('per-repo-gh-token');
+    expect(creds.user).toBe('x-token-auth');
+  });
+
+  it('falls back to GITHUB_TOKEN when no per-repo token is set', () => {
+    const repo = makeRepo({ cloneUrl: 'https://github.com/org/my-backend.git' });
+    const creds = resolveCredentials(repo, makeConfig({ githubToken: 'shared-gh' }));
+    expect(creds.token).toBe('shared-gh');
+  });
+
+  it('uses GIT_TOKEN_<REPO_NAME> for other hosts (per-repo token)', () => {
+    process.env['GIT_TOKEN_MY_BACKEND'] = 'per-repo-git-token';
+    const repo = makeRepo({ cloneUrl: 'https://gitlab.com/org/my-backend.git' });
+    const creds = resolveCredentials(repo, makeConfig({ gitToken: 'shared-git' }));
+    expect(creds.token).toBe('per-repo-git-token');
+  });
+
+  it('falls back to GIT_TOKEN when no platform or per-repo token is set', () => {
+    const repo = makeRepo({ cloneUrl: 'https://gitlab.com/org/my-backend.git' });
+    const creds = resolveCredentials(repo, makeConfig({ gitToken: 'fallback-token', gitUser: 'myuser' }));
+    expect(creds.token).toBe('fallback-token');
+    expect(creds.user).toBe('myuser');
+  });
+
+  it('per-repo token takes priority over shared platform token', () => {
+    process.env['BITBUCKET_TOKEN_MY_SERVICE'] = 'per-repo';
+    const repo = makeRepo({ name: 'my-service', cloneUrl: 'https://bitbucket.org/org/my-service.git' });
+    const creds = resolveCredentials(repo, makeConfig({ bitbucketToken: 'shared', gitToken: 'fallback' }));
+    expect(creds.token).toBe('per-repo');
+  });
+});
+
+// ── checkTokenExpiry ──────────────────────────────────────────────────────────
 
 describe('checkTokenExpiry', () => {
   const now = new Date('2026-04-15T12:00:00Z');

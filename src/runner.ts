@@ -2,7 +2,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { log, ok, warn, err, dim, run } from './logger.js';
-import { cloneRepo, cleanupRepo, detectPlatform } from './git.js';
+import { cloneRepo, cleanupRepo, detectPlatform, repoTokenEnvKey } from './git.js';
 import { generateSbom } from './sbom.js';
 import { scanSbom } from './scanner.js';
 import { buildSummary, generateReports } from './report.js';
@@ -10,7 +10,7 @@ import type { ReportFiles } from './report.js';
 import { notify, notifyTokenExpiry } from './notify.js';
 import type { NotifyConfig } from './notify.js';
 import type { LoadedConfig } from './config.js';
-import type { RepoResult, GlobalSummary, TokenExpiryWarning } from './types.js';
+import type { RepoConfig, RepoResult, GlobalSummary, TokenExpiryWarning } from './types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -104,7 +104,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
 
     try {
       // Clone
-      const { token, user } = resolveCredentials(repo.cloneUrl, config);
+      const { token, user } = resolveCredentials(repo, config);
       const { commitSha, localPath } = cloneRepo(repo, workDir, token, user);
       result.commitSha = commitSha;
 
@@ -279,19 +279,31 @@ function executeDryRun(config: LoadedConfig): RunResult {
 
 /**
  * Picks the right token/user for a repo based on its hosting platform.
- * Platform-specific vars take priority; falls back to the generic GIT_TOKEN/GIT_USER.
+ * Resolution order (highest to lowest priority):
+ *   1. BITBUCKET_TOKEN_<REPO_NAME> / GITHUB_TOKEN_<REPO_NAME> / GIT_TOKEN_<REPO_NAME>
+ *      — per-repo token created from the repository's own access token settings
+ *   2. BITBUCKET_TOKEN / GITHUB_TOKEN — shared platform token
+ *   3. GIT_TOKEN — generic fallback
+ * Exported for testing.
  */
-function resolveCredentials(
-  cloneUrl: string,
+export function resolveCredentials(
+  repo: RepoConfig,
   config: LoadedConfig,
 ): { token: string; user: string } {
-  const platform = detectPlatform(cloneUrl);
-  if (platform === 'github' && config.githubToken) {
-    return { token: config.githubToken, user: config.githubUser };
+  const platform = detectPlatform(repo.cloneUrl);
+  const perRepoToken = process.env[repoTokenEnvKey(platform, repo.name)] ?? '';
+
+  if (platform === 'bitbucket') {
+    if (perRepoToken) return { token: perRepoToken, user: 'x-token-auth' };
+    if (config.bitbucketToken) return { token: config.bitbucketToken, user: config.bitbucketUser };
   }
-  if (platform === 'bitbucket' && config.bitbucketToken) {
-    return { token: config.bitbucketToken, user: config.bitbucketUser };
+
+  if (platform === 'github') {
+    if (perRepoToken) return { token: perRepoToken, user: config.githubUser };
+    if (config.githubToken) return { token: config.githubToken, user: config.githubUser };
   }
+
+  if (perRepoToken) return { token: perRepoToken, user: config.gitUser };
   return { token: config.gitToken, user: config.gitUser };
 }
 

@@ -22,6 +22,23 @@ export function detectPlatform(cloneUrl: string): GitPlatform {
   return 'other';
 }
 
+// ── Per-repo token env key ────────────────────────────────────────────────────
+
+/**
+ * Returns the environment variable name for a per-repo token.
+ * The prefix is derived from the platform; the repo name is uppercased with
+ * non-alphanumeric characters replaced by underscores.
+ *
+ * Examples:
+ *   ('bitbucket', 'my-backend')  → 'BITBUCKET_TOKEN_MY_BACKEND'
+ *   ('github',    'api_service') → 'GITHUB_TOKEN_API_SERVICE'
+ *   ('other',     'my-service')  → 'GIT_TOKEN_MY_SERVICE'
+ */
+export function repoTokenEnvKey(platform: GitPlatform, repoName: string): string {
+  const prefix = platform === 'github' ? 'GITHUB' : platform === 'bitbucket' ? 'BITBUCKET' : 'GIT';
+  return `${prefix}_TOKEN_${repoName.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+}
+
 // ── Credential sanitizer ──────────────────────────────────────────────────────
 
 /**

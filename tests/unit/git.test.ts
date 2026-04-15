@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { makeSanitizer, buildCloneUrl, cloneRepo, cleanupRepo, detectPlatform } from '../../src/git.js';
+import { makeSanitizer, buildCloneUrl, cloneRepo, cleanupRepo, detectPlatform, repoTokenEnvKey } from '../../src/git.js';
 import type { RepoConfig } from '../../src/types.js';
 
 // ── Mock logger so no shell commands actually run ─────────────────────────────
@@ -217,6 +217,34 @@ describe('detectPlatform', () => {
     expect(detectPlatform('https://gitlab.com/org/repo.git')).toBe('other');
     expect(detectPlatform('https://my-gitea.internal/org/repo.git')).toBe('other');
     expect(detectPlatform('https://dev.azure.com/org/repo.git')).toBe('other');
+  });
+});
+
+// ── repoTokenEnvKey ───────────────────────────────────────────────────────────
+
+describe('repoTokenEnvKey', () => {
+  it('generates BITBUCKET_ prefix for bitbucket platform', () => {
+    expect(repoTokenEnvKey('bitbucket', 'my-backend')).toBe('BITBUCKET_TOKEN_MY_BACKEND');
+  });
+
+  it('generates GITHUB_ prefix for github platform', () => {
+    expect(repoTokenEnvKey('github', 'my-backend')).toBe('GITHUB_TOKEN_MY_BACKEND');
+  });
+
+  it('generates GIT_ prefix for other platform', () => {
+    expect(repoTokenEnvKey('other', 'my-service')).toBe('GIT_TOKEN_MY_SERVICE');
+  });
+
+  it('replaces hyphens with underscores', () => {
+    expect(repoTokenEnvKey('bitbucket', 'my-android-app')).toBe('BITBUCKET_TOKEN_MY_ANDROID_APP');
+  });
+
+  it('replaces any non-alphanumeric character with underscore', () => {
+    expect(repoTokenEnvKey('bitbucket', 'api.service')).toBe('BITBUCKET_TOKEN_API_SERVICE');
+  });
+
+  it('uppercases the repo name', () => {
+    expect(repoTokenEnvKey('github', 'myrepo')).toBe('GITHUB_TOKEN_MYREPO');
   });
 });
 

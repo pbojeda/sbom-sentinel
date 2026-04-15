@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import type { SentinelConfig, RepoConfig } from './types.js';
-import { detectPlatform } from './git.js';
+import { detectPlatform, repoTokenEnvKey } from './git.js';
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -219,15 +219,18 @@ export function loadConfig(
   for (const repo of config.repos) {
     if (!repo.private) continue;
     const platform = detectPlatform(repo.cloneUrl);
+    const perRepoToken = process.env[repoTokenEnvKey(platform, repo.name)] ?? '';
     const resolved =
+      perRepoToken ? perRepoToken :
       platform === 'github'    ? (githubToken || gitToken) :
       platform === 'bitbucket' ? (bitbucketToken || gitToken) :
       gitToken;
     if (!resolved) {
+      const envKey = repoTokenEnvKey(platform, repo.name);
       const hint =
-        platform === 'github'    ? 'GITHUB_TOKEN (or GIT_TOKEN)'    :
-        platform === 'bitbucket' ? 'BITBUCKET_TOKEN (or GIT_TOKEN)' :
-        'GIT_TOKEN';
+        platform === 'github'    ? `${envKey}, GITHUB_TOKEN, or GIT_TOKEN` :
+        platform === 'bitbucket' ? `${envKey}, BITBUCKET_TOKEN, or GIT_TOKEN` :
+        `${envKey} or GIT_TOKEN`;
       throw new Error(
         `Repo "${repo.name}" is marked as private but no token is configured.\n` +
         `Set ${hint} in your environment or .env file.`,
