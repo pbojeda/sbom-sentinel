@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.1] — 2026-04-16
+
+### Fixed
+
+- **IBM COS public URL construction** — `IBM_COS_PUBLIC_URL` set to an empty string (e.g. when the env var is declared but not set in a Kubernetes Secret) was incorrectly used as the URL base instead of falling through to `IBM_COS_ENDPOINT`. Changed `??` to `||` in `storage.ts` so both `undefined` and empty-string values correctly fall back to the endpoint. The upload itself was never affected — only the URL shown in notifications.
+
+### Added
+
+- **IBM Cloud IKS deployment files** — `deploy/kubernetes/cronjob.yaml`, `deploy/kubernetes/secrets.yaml`: production-ready CronJob manifest adapted for IBM Cloud IKS (namespace `i360`, ICR registry `de.icr.io`, `emptyDir` instead of PVC since reports are uploaded to IBM COS). Build images for IKS with `docker buildx build --platform linux/amd64`.
+
+---
+
 ## [0.4.0] — 2026-04-16
 
 ### Added
@@ -87,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full unit test suite with Vitest (121 tests, zero external tool calls in tests)
 - Examples: Docker, Kubernetes CronJob, GitHub Actions, Bitbucket Pipelines
 
-[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/pbojeda/sbom-sentinel/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.0...v0.2.1
