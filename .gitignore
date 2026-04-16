@@ -13,6 +13,9 @@ artifacts/
 # Local config with real repo URLs (use examples/sbom-sentinel.config.json as template)
 sbom-sentinel.config.json
 .env.local
+
+# Production K8s configmap — contains real repo URLs (not for the public repo)
+deploy/kubernetes/configmap.yaml
 .env.*.local
 .npmrc
 
