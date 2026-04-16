@@ -33,7 +33,7 @@ External dependencies (system binaries — not npm packages):
 
 ## Key conventions
 
-- **No unnecessary npm deps.** Logger, CLI parser, and HTTP calls (Slack) use Node 20 built-ins only. `nodemailer` is the sole optional dependency.
+- **No unnecessary npm deps.** Logger, CLI parser, and HTTP calls (Slack) use Node 20 built-ins only. Optional dependencies: `nodemailer` (email), `@aws-sdk/client-s3` (IBM COS storage), `googleapis` (Google Drive storage). All three are optional — the base install is unaffected when they are absent.
 - **Credentials never appear in logs or artefacts.** `git.ts` sanitises clone URLs before any output.
 - **`execSync`** from `node:child_process` for all external tool calls. Each module that shells out accepts an exec function parameter to allow easy mocking in tests.
 - **Strict TypeScript** (`strict: true`, `module: Node16`). All code must compile cleanly with `npm run lint`.

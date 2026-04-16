@@ -14,8 +14,10 @@ artifacts/
 sbom-sentinel.config.json
 .env.local
 
-# Production K8s configmap — contains real repo URLs (not for the public repo)
-deploy/kubernetes/configmap.yaml
+# Local deployment files — project-specific, generated per deployment
+deploy/
+
+# (deploy/ is gitignored; use examples/kubernetes/ as the starting template)
 .env.*.local
 .npmrc
 
@@ -43,8 +45,9 @@ npm-debug.log*
 *.pem
 *.key
 
-# Claude Code local settings (personal — not shared)
+# Claude Code — local settings and agent worktrees (personal — not shared)
 .claude/settings.local.json
+.claude/worktrees/
 
 # SDD DevFlow local metadata (not part of sbom-sentinel)
 .sdd-meta.json

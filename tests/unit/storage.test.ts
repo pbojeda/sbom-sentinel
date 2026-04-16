@@ -196,11 +196,12 @@ describe('uploadReports — ibm-cos', () => {
 
 describe('uploadReports — google-drive', () => {
   const mockFilesCreate = vi.fn();
+  const mockFilesList   = vi.fn();
   const mockPermissionsCreate = vi.fn().mockResolvedValue({});
   const MockGoogleAuth = vi.fn().mockImplementation(() => ({}));
 
   const mockDrive = {
-    files:       { create: mockFilesCreate },
+    files:       { create: mockFilesCreate, list: mockFilesList },
     permissions: { create: mockPermissionsCreate },
   };
 
@@ -212,6 +213,9 @@ describe('uploadReports — google-drive', () => {
   beforeEach(() => {
     vi.resetModules();
     mockFilesCreate.mockReset();
+    mockFilesList.mockReset();
+    // Default: no existing date folder → triggers folder creation
+    mockFilesList.mockResolvedValue({ data: { files: [] } });
     mockPermissionsCreate.mockResolvedValue({});
     MockGoogleAuth.mockClear();
     vi.mocked(warn).mockClear();
@@ -220,6 +224,7 @@ describe('uploadReports — google-drive', () => {
 
   it('uploads HTML and sets public read permission', async () => {
     mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })  // date folder
       .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
       .mockResolvedValueOnce({ data: { id: 'file456' } });
 
@@ -236,11 +241,13 @@ describe('uploadReports — google-drive', () => {
     expect(mockPermissionsCreate).toHaveBeenCalledWith({
       fileId: 'file123',
       requestBody: { role: 'reader', type: 'anyone' },
+      supportsAllDrives: true,
     });
   });
 
   it('requests fields: "id, webViewLink" on HTML upload', async () => {
     mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })  // date folder
       .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
       .mockResolvedValueOnce({ data: { id: 'file456' } });
 
@@ -253,12 +260,13 @@ describe('uploadReports — google-drive', () => {
     };
 
     await upload(REPORTS, config);
-    const htmlCall = mockFilesCreate.mock.calls[0][0];
+    const htmlCall = mockFilesCreate.mock.calls[1][0];  // [1]: HTML (after folder create at [0])
     expect(htmlCall.fields).toBe('id, webViewLink');
   });
 
   it('passes credentials as JSON when value starts with {', async () => {
     mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })
       .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
       .mockResolvedValueOnce({ data: { id: 'file456' } });
 
@@ -276,6 +284,7 @@ describe('uploadReports — google-drive', () => {
 
   it('passes credentials as keyFile when value is a file path', async () => {
     mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })
       .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
       .mockResolvedValueOnce({ data: { id: 'file456' } });
 
@@ -293,8 +302,9 @@ describe('uploadReports — google-drive', () => {
     );
   });
 
-  it('passes folderId as parent when set', async () => {
+  it('creates date subfolder inside folderId and uploads files into it', async () => {
     mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })   // date folder
       .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
       .mockResolvedValueOnce({ data: { id: 'file456' } });
 
@@ -308,12 +318,26 @@ describe('uploadReports — google-drive', () => {
     };
 
     await upload(REPORTS, config);
-    const htmlCall = mockFilesCreate.mock.calls[0][0];
-    expect(htmlCall.requestBody.parents).toEqual(['folder123']);
+
+    // date folder is created inside the configured folderId
+    const folderCall = mockFilesCreate.mock.calls[0][0];
+    expect(folderCall.requestBody).toMatchObject({
+      name: '2024-04-14',
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: ['folder123'],
+    });
+
+    // HTML and JSON are uploaded into the date folder, not directly into folderId
+    const htmlCall = mockFilesCreate.mock.calls[1][0];
+    expect(htmlCall.requestBody.parents).toEqual(['folder-2024-04-14']);
+    const jsonCall = mockFilesCreate.mock.calls[2][0];
+    expect(jsonCall.requestBody.parents).toEqual(['folder-2024-04-14']);
   });
 
-  it('returns undefined and logs error when no file ID is returned', async () => {
-    mockFilesCreate.mockResolvedValueOnce({ data: { id: null } });
+  it('returns undefined when HTML file create returns no ID', async () => {
+    mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })  // date folder succeeds
+      .mockResolvedValueOnce({ data: { id: null } });                 // HTML returns no ID
 
     vi.doMock('googleapis', () => ({ google: mockGoogle }));
 
@@ -328,8 +352,25 @@ describe('uploadReports — google-drive', () => {
     expect(err).toHaveBeenCalledWith(expect.stringContaining('file ID'));
   });
 
+  it('returns undefined when date folder create returns no ID', async () => {
+    mockFilesCreate.mockResolvedValueOnce({ data: { id: null } });  // folder returns no ID
+
+    vi.doMock('googleapis', () => ({ google: mockGoogle }));
+
+    const { uploadReports: upload } = await import('../../src/storage.js');
+    const config: StorageConfig = {
+      provider: 'google-drive',
+      credentials: '{"client_email":"sa@project.iam.gserviceaccount.com","private_key":"key"}',
+    };
+
+    const url = await upload(REPORTS, config);
+    expect(url).toBeUndefined();
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('subfolder'));
+  });
+
   it('returns the HTML URL even when JSON upload fails', async () => {
     mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })
       .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
       .mockRejectedValueOnce(new Error('quota exceeded'));
 
@@ -374,5 +415,97 @@ describe('uploadReports — google-drive', () => {
     const url = await upload(REPORTS, config);
     expect(url).toBeUndefined();
     expect(err).toHaveBeenCalledWith(expect.stringContaining('Auth failed'));
+  });
+
+  it('reuses existing date folder without creating a duplicate', async () => {
+    // filesList returns an existing folder → no folder create call
+    mockFilesList.mockResolvedValueOnce({ data: { files: [{ id: 'existing-folder-id' }] } });
+    mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
+      .mockResolvedValueOnce({ data: { id: 'file456' } });
+
+    vi.doMock('googleapis', () => ({ google: mockGoogle }));
+
+    const { uploadReports: upload } = await import('../../src/storage.js');
+    const config: StorageConfig = {
+      provider: 'google-drive',
+      credentials: '{"client_email":"sa@project.iam.gserviceaccount.com","private_key":"key"}',
+      folderId: 'folder123',
+    };
+
+    await upload(REPORTS, config);
+
+    // Only two filesCreate calls (HTML + JSON) — no folder creation
+    expect(mockFilesCreate).toHaveBeenCalledTimes(2);
+    // Both files uploaded into the existing folder
+    expect(mockFilesCreate.mock.calls[0][0].requestBody.parents).toEqual(['existing-folder-id']);
+    expect(mockFilesCreate.mock.calls[1][0].requestBody.parents).toEqual(['existing-folder-id']);
+  });
+
+  it('creates date subfolder in "root" when folderId is not set', async () => {
+    mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })
+      .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
+      .mockResolvedValueOnce({ data: { id: 'file456' } });
+
+    vi.doMock('googleapis', () => ({ google: mockGoogle }));
+
+    const { uploadReports: upload } = await import('../../src/storage.js');
+    const config: StorageConfig = {
+      provider: 'google-drive',
+      credentials: '{"client_email":"sa@project.iam.gserviceaccount.com","private_key":"key"}',
+      // folderId not set
+    };
+
+    await upload(REPORTS, config);
+
+    const folderCall = mockFilesCreate.mock.calls[0][0];
+    expect(folderCall.requestBody.parents).toEqual(['root']);
+  });
+
+  it('searches for date folder using the correct Drive API query', async () => {
+    mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })
+      .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
+      .mockResolvedValueOnce({ data: { id: 'file456' } });
+
+    vi.doMock('googleapis', () => ({ google: mockGoogle }));
+
+    const { uploadReports: upload } = await import('../../src/storage.js');
+    const config: StorageConfig = {
+      provider: 'google-drive',
+      credentials: '{"client_email":"sa@project.iam.gserviceaccount.com","private_key":"key"}',
+      folderId: 'folder123',
+    };
+
+    await upload(REPORTS, config);
+
+    expect(mockFilesList).toHaveBeenCalledWith({
+      q: `mimeType='application/vnd.google-apps.folder' and name='2024-04-14' and 'folder123' in parents and trashed=false`,
+      fields: 'files(id)',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+  });
+
+  it('still returns the HTML URL when permissions.create fails (org policy rejection)', async () => {
+    mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })
+      .mockResolvedValueOnce({ data: { id: 'file123', webViewLink: 'https://drive.google.com/file/d/file123/view' } })
+      .mockResolvedValueOnce({ data: { id: 'file456' } });
+    mockPermissionsCreate.mockRejectedValueOnce(new Error('Sharing is restricted by policy'));
+
+    vi.doMock('googleapis', () => ({ google: mockGoogle }));
+
+    const { uploadReports: upload } = await import('../../src/storage.js');
+    const config: StorageConfig = {
+      provider: 'google-drive',
+      credentials: '{"client_email":"sa@project.iam.gserviceaccount.com","private_key":"key"}',
+    };
+
+    const url = await upload(REPORTS, config);
+
+    expect(url).toBe('https://drive.google.com/file/d/file123/view');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('org policy'));
   });
 });

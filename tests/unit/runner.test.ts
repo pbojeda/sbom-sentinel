@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { checkTokenExpiry, resolveCredentials } from '../../src/runner.js';
+import { checkTokenExpiry, resolveCredentials, scan } from '../../src/runner.js';
 import type { LoadedConfig } from '../../src/config.js';
 import type { RepoConfig } from '../../src/types.js';
 
@@ -56,6 +56,7 @@ function makeConfig(overrides: Partial<LoadedConfig> = {}): LoadedConfig {
     smtpPort: 587,
     logLevel: 'info',
     dryRun: false,
+    storageConfigs: [],
     ...overrides,
   } as LoadedConfig;
 }
@@ -133,6 +134,89 @@ describe('resolveCredentials', () => {
     const repo = makeRepo({ name: 'my-service', cloneUrl: 'https://bitbucket.org/org/my-service.git' });
     const creds = resolveCredentials(repo, makeConfig({ bitbucketToken: 'shared', gitToken: 'fallback' }));
     expect(creds.token).toBe('per-repo');
+  });
+});
+
+// ── scan — storage upload loop ────────────────────────────────────────────────
+
+describe('scan — storage upload loop', () => {
+  beforeEach(async () => {
+    const { cloneRepo }      = await import('../../src/git.js');
+    const { scanSbom }       = await import('../../src/scanner.js');
+    const { buildSummary, generateReports } = await import('../../src/report.js');
+
+    vi.mocked(cloneRepo).mockReturnValue({ commitSha: 'abc1234', localPath: '/tmp/repo' });
+    vi.mocked(scanSbom).mockReturnValue({ findings: [], errors: [] });
+    vi.mocked(buildSummary).mockReturnValue({ date: '2026-04-16', generatedAt: '', totals: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 }, hasCriticalOrHigh: false, hasErrors: false, reposWithIssues: [], reposWithErrors: [], repositories: [] } as never);
+    vi.mocked(generateReports).mockReturnValue({ json: '/tmp/r.json', html: '/tmp/r.html', txt: '/tmp/r.txt' });
+  });
+
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it('calls uploadReports once per configured provider', async () => {
+    const { uploadReports } = await import('../../src/storage.js');
+    vi.mocked(uploadReports).mockResolvedValue('https://cdn.example.com/report.html');
+
+    const config = makeConfig({
+      config: { repos: [makeRepo()] },
+      storageConfigs: [
+        { provider: 'ibm-cos' },
+        { provider: 'google-drive' },
+      ],
+    });
+
+    await scan(config);
+
+    expect(vi.mocked(uploadReports)).toHaveBeenCalledTimes(2);
+  });
+
+  it('continues to second provider even when first returns undefined', async () => {
+    const { uploadReports } = await import('../../src/storage.js');
+    const { notify }        = await import('../../src/notify.js');
+    vi.mocked(uploadReports)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce('https://drive.google.com/file/d/abc/view');
+
+    const config = makeConfig({
+      config: { repos: [makeRepo()] },
+      storageConfigs: [
+        { provider: 'ibm-cos' },
+        { provider: 'google-drive' },
+      ],
+    });
+
+    await scan(config);
+
+    expect(vi.mocked(uploadReports)).toHaveBeenCalledTimes(2);
+    // reportUrl from second provider must reach notify
+    expect(vi.mocked(notify)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ reportUrl: 'https://drive.google.com/file/d/abc/view' }),
+    );
+  });
+
+  it('uses the first successful URL when both providers succeed', async () => {
+    const { uploadReports } = await import('../../src/storage.js');
+    const { notify }        = await import('../../src/notify.js');
+    vi.mocked(uploadReports)
+      .mockResolvedValueOnce('https://cos.example.com/report.html')
+      .mockResolvedValueOnce('https://drive.google.com/file/d/abc/view');
+
+    const config = makeConfig({
+      config: { repos: [makeRepo()] },
+      storageConfigs: [
+        { provider: 'ibm-cos' },
+        { provider: 'google-drive' },
+      ],
+    });
+
+    await scan(config);
+
+    // IBM COS URL (first provider) wins
+    expect(vi.mocked(notify)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ reportUrl: 'https://cos.example.com/report.html' }),
+    );
   });
 });
 

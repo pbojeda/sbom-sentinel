@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json",
-  "manufacturer": "My Company, S.L.",
+  "manufacturer": "My Company",
   "outputDir": "./artifacts",
   "notifications": {
     "onVulnerabilities": true,

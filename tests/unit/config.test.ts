@@ -364,19 +364,19 @@ describe('loadConfig', () => {
     rmSync(dir, { recursive: true });
   });
 
-  // ── storageConfig ───────────────────────────────────────────────────────────
+  // ── storageConfigs ──────────────────────────────────────────────────────────
 
-  it('storageConfig is undefined when STORAGE_PROVIDER is not set', () => {
+  it('storageConfigs is empty when STORAGE_PROVIDER is not set', () => {
     const dir = makeTempDir();
     writeConfigFile(dir, { repos: [VALID_REPO] });
 
     const result = loadConfig([], dir);
 
-    expect(result.storageConfig).toBeUndefined();
+    expect(result.storageConfigs).toEqual([]);
     rmSync(dir, { recursive: true });
   });
 
-  it('builds storageConfig for ibm-cos when all required vars are set', () => {
+  it('builds storageConfigs for ibm-cos when all required vars are set', () => {
     const dir = makeTempDir();
     writeConfigFile(dir, { repos: [VALID_REPO] });
     process.env['STORAGE_PROVIDER']          = 'ibm-cos';
@@ -389,7 +389,8 @@ describe('loadConfig', () => {
 
     const result = loadConfig([], dir);
 
-    expect(result.storageConfig).toMatchObject({
+    expect(result.storageConfigs).toHaveLength(1);
+    expect(result.storageConfigs[0]).toMatchObject({
       provider: 'ibm-cos',
       endpoint: 'https://s3.eu-de.cloud-object-storage.appdomain.cloud',
       bucket: 'my-bucket',
@@ -412,7 +413,7 @@ describe('loadConfig', () => {
 
     const result = loadConfig([], dir);
 
-    expect(result.storageConfig?.region).toBe('us-south');
+    expect(result.storageConfigs[0]?.region).toBe('us-south');
     rmSync(dir, { recursive: true });
   });
 
@@ -426,20 +427,39 @@ describe('loadConfig', () => {
     rmSync(dir, { recursive: true });
   });
 
-  it('builds storageConfig for google-drive when credentials are set', () => {
+  it('builds storageConfigs for google-drive when credentials are set', () => {
     const dir = makeTempDir();
     writeConfigFile(dir, { repos: [VALID_REPO] });
-    process.env['STORAGE_PROVIDER']       = 'google-drive';
+    process.env['STORAGE_PROVIDER']        = 'google-drive';
     process.env['GOOGLE_DRIVE_CREDENTIALS'] = '/secrets/service-account.json';
     process.env['GOOGLE_DRIVE_FOLDER_ID']  = 'folder123';
 
     const result = loadConfig([], dir);
 
-    expect(result.storageConfig).toMatchObject({
+    expect(result.storageConfigs).toHaveLength(1);
+    expect(result.storageConfigs[0]).toMatchObject({
       provider: 'google-drive',
       credentials: '/secrets/service-account.json',
       folderId: 'folder123',
     });
+    rmSync(dir, { recursive: true });
+  });
+
+  it('builds two storageConfigs when STORAGE_PROVIDER is comma-separated', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['STORAGE_PROVIDER']          = 'ibm-cos,google-drive';
+    process.env['IBM_COS_ENDPOINT']          = 'https://s3.eu-de.cloud-object-storage.appdomain.cloud';
+    process.env['IBM_COS_BUCKET']            = 'my-bucket';
+    process.env['IBM_COS_ACCESS_KEY_ID']     = 'key-id';
+    process.env['IBM_COS_SECRET_ACCESS_KEY'] = 'secret-key';
+    process.env['GOOGLE_DRIVE_CREDENTIALS']  = '/secrets/service-account.json';
+
+    const result = loadConfig([], dir);
+
+    expect(result.storageConfigs).toHaveLength(2);
+    expect(result.storageConfigs[0].provider).toBe('ibm-cos');
+    expect(result.storageConfigs[1].provider).toBe('google-drive');
     rmSync(dir, { recursive: true });
   });
 

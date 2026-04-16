@@ -39,6 +39,15 @@ Environment variables:
   GIT_USER                  Fallback git username (default: x-token-auth)
   SLACK_WEBHOOK_URL         Slack webhook for notifications
   SMTP_HOST                 SMTP server for email notifications
+  STORAGE_PROVIDER          Enable report upload: ibm-cos, google-drive, or ibm-cos,google-drive
+  IBM_COS_ENDPOINT          IBM COS S3 endpoint URL
+  IBM_COS_BUCKET            IBM COS bucket name
+  IBM_COS_ACCESS_KEY_ID     IBM COS HMAC access key ID
+  IBM_COS_SECRET_ACCESS_KEY IBM COS HMAC secret access key
+  IBM_COS_REGION            IBM COS region (default: us-south)
+  IBM_COS_PUBLIC_URL        IBM COS virtual-hosted public base URL (optional)
+  GOOGLE_DRIVE_CREDENTIALS  Path to service-account.json or inline JSON
+  GOOGLE_DRIVE_FOLDER_ID    Google Drive target folder ID (optional)
   SENTINEL_CONFIG           Path to config file (overrides --config)
   SENTINEL_OUTPUT_DIR       Output directory (default: ./artifacts)
   LOG_LEVEL                 debug | info | warn | error (default: info)

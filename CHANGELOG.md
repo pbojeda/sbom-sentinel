@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] — 2026-04-16
+
+### Added
+
+- **Multi-provider storage** — `STORAGE_PROVIDER` now accepts a comma-separated list (e.g. `ibm-cos,google-drive`) to upload reports to both providers simultaneously. The first successful URL is used for notifications. Backward-compatible: existing single-value configs are unaffected.
+- **Google Drive: date subfolder organisation** — reports are now uploaded into a `YYYY-MM-DD/` subfolder inside `GOOGLE_DRIVE_FOLDER_ID` (or Drive root). The subfolder is created on first use and reused on subsequent runs the same day, avoiding duplicates. Mirrors the local `artifacts/YYYY-MM-DD/` directory structure.
+- **HTML report improvements**:
+  - **Column reorder** — repository table now shows `Repo | CRITICAL | HIGH | Status | Branch | Commit | MEDIUM | LOW`, keeping the most actionable columns front and centre
+  - **Zero counts as dash** — zero severity counts render as `-` instead of `0` to reduce visual noise
+  - **Commit SHA tooltip** — SHA truncated to 7 characters in the table; full SHA shown on hover via `title` attribute
+  - **Blast-radius line** — shows "N of M repositories affected · K scan errors" between the status banner and the severity badges
+  - **Responsive tables** — both tables wrapped in `overflow-x: auto` for horizontal scroll on narrow viewports
+  - **Complete dark mode** — badges, severity colours, blast-radius, status indicators, footer, links, and findings-meta are all correctly styled for `prefers-color-scheme: dark`
+- **HTML report: XSS protection for CVE links** — `safeUrl()` validates that href URLs start with `http://` or `https://` (blocking `javascript:` and `data:` injection), combined with `esc()` (blocking attribute breakout via embedded quotes). Defence-in-depth: two independent protection layers.
+
+### Fixed
+
+- **Google Drive: Shared Drive support for Google Workspace organisations** — Added `supportsAllDrives: true` and `includeItemsFromAllDrives: true` to all Drive API calls. Service accounts in Google Workspace organisations that restrict personal Drive storage can now upload to a Shared Drive without the `Service Accounts do not have storage quota` error.
+
+---
+
 ## [0.4.1] — 2026-04-16
 
 ### Fixed
@@ -99,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full unit test suite with Vitest (121 tests, zero external tool calls in tests)
 - Examples: Docker, Kubernetes CronJob, GitHub Actions, Bitbucket Pipelines
 
-[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/pbojeda/sbom-sentinel/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.1...v0.3.0

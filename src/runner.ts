@@ -152,8 +152,9 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
   // ── 6b. Upload to storage (optional) ───────────────────────────────────────
 
   let reportUrl: string | undefined;
-  if (config.storageConfig) {
-    reportUrl = await uploadReports(reports, config.storageConfig);
+  for (const storageConf of config.storageConfigs) {
+    const url = await uploadReports(reports, storageConf);
+    if (url && !reportUrl) reportUrl = url;
   }
 
   // ── 7. Notify ──────────────────────────────────────────────────────────────
@@ -260,7 +261,7 @@ function executeDryRun(config: LoadedConfig): RunResult {
   log(`Bitbucket token      : ${!!config.bitbucketToken}`);
   log(`Slack webhook        : ${config.slackWebhookUrl ? 'configured' : 'not set'}`);
   log(`Email recipients     : ${config.emailTo.length > 0 ? config.emailTo.join(', ') : 'not set'}`);
-  log(`Storage provider     : ${config.storageConfig ? config.storageConfig.provider : 'not set'}`);
+  log(`Storage provider     : ${config.storageConfigs.length > 0 ? config.storageConfigs.map((c) => c.provider).join(', ') : 'not set'}`);
 
   const tokenExpiry = config.config.tokenExpiry ?? {};
   if (Object.keys(tokenExpiry).length > 0) {

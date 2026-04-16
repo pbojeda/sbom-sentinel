@@ -201,19 +201,19 @@ export function generateHtml(summary: GlobalSummary): string {
     .map((r) => {
       const c = r.counts;
       const status = r.error
-        ? `<span style="color:#dc2626;font-weight:700">ERROR</span>`
-        : `<span style="color:#16a34a">OK</span>`;
+        ? `<span class="status-error">ERROR</span>`
+        : `<span class="status-ok">OK</span>`;
       return `
-        <tr>
-          <td><code>${esc(r.repo)}</code></td>
-          <td>${esc(r.branch)}</td>
-          <td><code>${esc(r.commitSha)}</code></td>
-          <td class="sev-CRITICAL">${c.CRITICAL || ''}</td>
-          <td class="sev-HIGH">${c.HIGH || ''}</td>
-          <td class="sev-MEDIUM">${c.MEDIUM || ''}</td>
-          <td class="sev-LOW">${c.LOW || ''}</td>
-          <td>${status}</td>
-        </tr>`;
+  <tr>
+    <td><code>${esc(r.repo)}</code></td>
+    <td class="sev-CRITICAL">${c.CRITICAL === 0 ? '-' : c.CRITICAL}</td>
+    <td class="sev-HIGH">${c.HIGH === 0 ? '-' : c.HIGH}</td>
+    <td>${status}</td>
+    <td>${esc(r.branch)}</td>
+    <td><code title="${esc(r.commitSha)}">${esc(r.commitSha.slice(0, 7))}</code></td>
+    <td class="sev-MEDIUM">${c.MEDIUM === 0 ? '-' : c.MEDIUM}</td>
+    <td class="sev-LOW">${c.LOW === 0 ? '-' : c.LOW}</td>
+  </tr>`;
     })
     .join('');
 
@@ -241,11 +241,22 @@ export function generateHtml(summary: GlobalSummary): string {
 
   const uniqueCritHighCveCount = new Set(allCritHighFindings.map((f) => f.id)).size;
 
+  const blastRadius = (() => {
+    const affected = summary.reposWithIssues.length;
+    const total    = summary.repositories.length;
+    const errors   = summary.reposWithErrors.length;
+    const parts: string[] = [];
+    if (affected > 0) parts.push(`${affected} of ${total} ${total === 1 ? 'repository' : 'repositories'} affected`);
+    if (errors > 0)   parts.push(`${errors} scan ${errors === 1 ? 'error' : 'errors'}`);
+    return parts.length > 0 ? parts.join(' · ') : '';
+  })();
+
   const findingsSection =
     allCritHighFindings.length === 0
       ? ''
       : `
     <h2>Critical / High Findings <span class="findings-meta">${allCritHighFindings.length} findings · ${uniqueCritHighCveCount} unique CVE IDs</span></h2>
+    <div class="table-wrap">
     <table>
       <thead>
         <tr>
@@ -258,7 +269,7 @@ export function generateHtml(summary: GlobalSummary): string {
           .map(
             (f) => `
         <tr>
-          <td><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.id)}</a></td>
+          <td><a href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">${esc(f.id)}</a></td>
           <td><code>${esc(f.pkg)}</code></td>
           <td><code>${esc(f.installed)}</code></td>
           <td>${f.fixed ? `<code>${esc(f.fixed)}</code>` : '<em>no fix</em>'}</td>
@@ -269,7 +280,8 @@ export function generateHtml(summary: GlobalSummary): string {
           )
           .join('')}
       </tbody>
-    </table>`;
+    </table>
+    </div>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -295,7 +307,9 @@ export function generateHtml(summary: GlobalSummary): string {
     .badge.medium{background:#fefce8;color:#ca8a04;border:1px solid #fde047}
     .badge.low{background:#eff6ff;color:#2563eb;border:1px solid #93c5fd}
     .findings-meta{font-weight:400;color:#6b7280;font-size:13px;margin-left:8px}
-    table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px}
+    .blast-radius{font-size:13px;color:#374151;margin:-8px 0 14px}
+    .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:8px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
     th{background:#f3f4f6;text-align:left;padding:8px 10px;font-weight:600;border-bottom:2px solid #e5e7eb}
     td{padding:7px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top}
     .sev-CRITICAL{color:#dc2626;font-weight:700}
@@ -303,6 +317,8 @@ export function generateHtml(summary: GlobalSummary): string {
     .sev-MEDIUM{color:#ca8a04}
     .sev-LOW{color:#2563eb}
     .sev-UNKNOWN{color:#6b7280}
+    .status-ok{color:#16a34a;font-weight:700}
+    .status-error{color:#dc2626;font-weight:700}
     a{color:#2563eb;text-decoration:none}
     a:hover{text-decoration:underline}
     code{font-family:ui-monospace,monospace;font-size:12px;background:#f3f4f6;padding:1px 5px;border-radius:3px}
@@ -317,6 +333,21 @@ export function generateHtml(summary: GlobalSummary): string {
       .banner.danger{background:#450a0a;color:#f87171;border-color:#991b1b}
       .banner.warning{background:#451a03;color:#fbbf24;border-color:#92400e}
       .error-box{background:#450a0a;border-color:#991b1b}
+      .badge.critical{background:#450a0a;color:#f87171;border-color:#991b1b}
+      .badge.high{background:#431407;color:#fb923c;border-color:#9a3412}
+      .badge.medium{background:#422006;color:#fbbf24;border-color:#92400e}
+      .badge.low{background:#1e3a5f;color:#93c5fd;border-color:#1d4ed8}
+      .sev-CRITICAL{color:#f87171}
+      .sev-HIGH{color:#fb923c}
+      .sev-MEDIUM{color:#fbbf24}
+      .sev-LOW{color:#93c5fd}
+      .subtitle{color:#9ca3af}
+      .findings-meta{color:#9ca3af}
+      footer{color:#9ca3af;border-top-color:#374151}
+      a{color:#60a5fa}
+      .blast-radius{color:#d1d5db}
+      .status-ok{color:#4ade80}
+      .status-error{color:#f87171}
     }
   </style>
 </head>
@@ -328,22 +359,24 @@ export function generateHtml(summary: GlobalSummary): string {
   </header>
 
   <div class="banner ${bannerClass}">${bannerText}</div>
-
+  ${blastRadius ? `<p class="blast-radius">${esc(blastRadius)}</p>` : ''}
   <div class="badges">
     ${badges}
   </div>
 
   <h2>Repositories (${summary.repositories.length})</h2>
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
-        <th>Repository</th><th>Branch</th><th>Commit</th>
-        <th>CRITICAL</th><th>HIGH</th><th>MEDIUM</th><th>LOW</th><th>Status</th>
+        <th>Repository</th><th>CRITICAL</th><th>HIGH</th><th>Status</th>
+        <th>Branch</th><th>Commit</th><th>MEDIUM</th><th>LOW</th>
       </tr>
     </thead>
     <tbody>${repoRows}
     </tbody>
   </table>
+  </div>
   ${errorsSection}
   ${findingsSection}
 
@@ -371,4 +404,10 @@ function esc(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/** Validates URL scheme (http/https only) to block javascript: and data: injection. */
+function safeUrl(url: string): string {
+  const u = url.trim();
+  return u.startsWith('http://') || u.startsWith('https://') ? u : '#';
 }

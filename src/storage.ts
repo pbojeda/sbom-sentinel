@@ -129,9 +129,14 @@ type DriveCreateOpts = {
   fields?: string;
 };
 type DrivePermissionOpts = { fileId?: string; requestBody?: Record<string, unknown> };
+type DriveListOpts = { q?: string; fields?: string; supportsAllDrives?: boolean; includeItemsFromAllDrives?: boolean };
+type DriveListData = { files?: Array<{ id?: string | null }> };
 type DriveClientInstance = {
-  files:       { create: (opts: DriveCreateOpts) => Promise<{ data: DriveFileData }> };
-  permissions: { create: (opts: DrivePermissionOpts) => Promise<unknown> };
+  files: {
+    create: (opts: DriveCreateOpts & { supportsAllDrives?: boolean }) => Promise<{ data: DriveFileData }>;
+    list:   (opts: DriveListOpts)   => Promise<{ data: DriveListData }>;
+  };
+  permissions: { create: (opts: DrivePermissionOpts & { supportsAllDrives?: boolean }) => Promise<unknown> };
 };
 type GoogleAuthCtor = new (opts: {
   credentials?: Record<string, unknown>;
@@ -142,6 +147,32 @@ type GoogleModule = {
   auth:  { GoogleAuth: GoogleAuthCtor };
   drive: (opts: { version: string; auth: unknown }) => DriveClientInstance;
 };
+
+async function getOrCreateDateFolder(
+  drive: DriveClientInstance,
+  parentId: string,
+  date: string,
+): Promise<string | undefined> {
+  const res = await drive.files.list({
+    q: `mimeType='application/vnd.google-apps.folder' and name='${date}' and '${parentId}' in parents and trashed=false`,
+    fields: 'files(id)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  const existing = res.data.files?.[0]?.id ?? undefined;
+  if (existing) return existing;
+
+  const folder = await drive.files.create({
+    requestBody: {
+      name: date,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [parentId],
+    },
+    fields: 'id',
+    supportsAllDrives: true,
+  });
+  return folder.data.id ?? undefined;
+}
 
 async function uploadToGoogleDrive(
   reports: ReportFiles,
@@ -165,20 +196,34 @@ async function uploadToGoogleDrive(
 
   const auth = new google.auth.GoogleAuth({
     ...authOpts,
-    scopes: ['https://www.googleapis.com/auth/drive.file'],
+    // drive scope required: drive.file only sees files the SA itself created,
+    // which prevents listing existing date subfolders in Shared Drives.
+    scopes: ['https://www.googleapis.com/auth/drive'],
   });
 
   const drive = google.drive({ version: 'v3', auth });
+
+  // Organise uploads under a YYYY-MM-DD subfolder (mirrors local artifacts/YYYY-MM-DD/)
+  const parentId = config.folderId ?? 'root';
+  const dateMatch = basename(reports.html).match(/(\d{4}-\d{2}-\d{2})/);
+  const date = dateMatch ? dateMatch[1] : new Date().toISOString().slice(0, 10);
+
+  const uploadFolderId = await getOrCreateDateFolder(drive, parentId, date);
+  if (!uploadFolderId) {
+    err('Google Drive: could not create or find date subfolder.');
+    return undefined;
+  }
 
   // Upload HTML report — primary file; the URL we return
   const htmlRes = await drive.files.create({
     requestBody: {
       name: basename(reports.html),
       mimeType: 'text/html',
-      ...(config.folderId ? { parents: [config.folderId] } : {}),
+      parents: [uploadFolderId],
     },
     media: { mimeType: 'text/html', body: createReadStream(reports.html) },
     fields: 'id, webViewLink',
+    supportsAllDrives: true,
   });
 
   const fileId = htmlRes.data.id;
@@ -187,12 +232,19 @@ async function uploadToGoogleDrive(
     return undefined;
   }
 
-  // Make the HTML report publicly readable
-  await drive.permissions.create({
-    fileId,
-    requestBody: { role: 'reader', type: 'anyone' },
-  });
-  dim(`  Drive: uploaded ${basename(reports.html)}`);
+  // Make the HTML report publicly readable.
+  // On Shared Drives with org policies that restrict "anyone with link", this call
+  // will be rejected — catch and warn so we still return the webViewLink.
+  try {
+    await drive.permissions.create({
+      fileId,
+      requestBody: { role: 'reader', type: 'anyone' },
+      supportsAllDrives: true,
+    });
+  } catch (e) {
+    warn(`Google Drive: could not set public read permission (org policy may restrict sharing): ${e instanceof Error ? e.message : String(e)}`);
+  }
+  dim(`  Drive: uploaded ${basename(reports.html)} → ${date}/`);
 
   // Upload JSON report — best-effort; failure does not block returning the HTML URL
   try {
@@ -200,12 +252,13 @@ async function uploadToGoogleDrive(
       requestBody: {
         name: basename(reports.json),
         mimeType: 'application/json',
-        ...(config.folderId ? { parents: [config.folderId] } : {}),
+        parents: [uploadFolderId],
       },
       media: { mimeType: 'application/json', body: createReadStream(reports.json) },
       fields: 'id',
+      supportsAllDrives: true,
     });
-    dim(`  Drive: uploaded ${basename(reports.json)}`);
+    dim(`  Drive: uploaded ${basename(reports.json)} → ${date}/`);
   } catch (e) {
     warn(`Google Drive: JSON upload failed: ${e instanceof Error ? e.message : String(e)}`);
   }

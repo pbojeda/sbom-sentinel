@@ -267,12 +267,84 @@ describe('generateHtml', () => {
     expect(html).toContain('abc1234');
   });
 
+  it('renders repository table with new column order: CRITICAL and HIGH before Status, MEDIUM and LOW after Commit', () => {
+    const summary = buildSummary([RESULT_WITH_FINDINGS], NOW);
+    const html = generateHtml(summary);
+
+    const theadMatch = html.match(/<thead>[\s\S]*?<\/thead>/);
+    expect(theadMatch).not.toBeNull();
+    const thead = theadMatch![0];
+    const criticalPos = thead.indexOf('<th>CRITICAL</th>');
+    const highPos     = thead.indexOf('<th>HIGH</th>');
+    const statusPos   = thead.indexOf('<th>Status</th>');
+    const branchPos   = thead.indexOf('<th>Branch</th>');
+    const commitPos   = thead.indexOf('<th>Commit</th>');
+    const mediumPos   = thead.indexOf('<th>MEDIUM</th>');
+    const lowPos      = thead.indexOf('<th>LOW</th>');
+
+    expect(criticalPos).toBeLessThan(highPos);
+    expect(highPos).toBeLessThan(statusPos);
+    expect(statusPos).toBeLessThan(branchPos);
+    expect(branchPos).toBeLessThan(commitPos);
+    expect(commitPos).toBeLessThan(mediumPos);
+    expect(mediumPos).toBeLessThan(lowPos);
+  });
+
+  it('renders zero severity counts as dash in repo table', () => {
+    const summary = buildSummary([RESULT_CLEAN], NOW);
+    const html = generateHtml(summary);
+
+    // RESULT_CLEAN has no findings so all counts are 0 → should show '-'
+    expect(html).toContain('class="sev-CRITICAL">-<');
+    expect(html).toContain('class="sev-HIGH">-<');
+    expect(html).toContain('class="sev-MEDIUM">-<');
+    expect(html).toContain('class="sev-LOW">-<');
+  });
+
   it('renders CVE IDs as links in the findings table', () => {
     const summary = buildSummary([RESULT_WITH_FINDINGS], NOW);
     const html = generateHtml(summary);
 
     expect(html).toContain('CVE-2022-24434');
     expect(html).toContain('href="https://avd.aquasec.com/nvd/cve-2022-24434"');
+  });
+
+  it('uses safeUrl: valid https URL is preserved in href', () => {
+    const summary = buildSummary([RESULT_WITH_FINDINGS], NOW);
+    const html = generateHtml(summary);
+
+    expect(html).toContain('href="https://avd.aquasec.com/nvd/cve-2022-24434"');
+  });
+
+  it('uses safeUrl: javascript: URL is replaced with # in href', () => {
+    const xssResult: RepoResult = {
+      ...RESULT_WITH_FINDINGS,
+      findings: [
+        { ...FINDING_CRITICAL, url: 'javascript:alert(1)' },
+        FINDING_HIGH,
+      ],
+    };
+    const summary = buildSummary([xssResult], NOW);
+    const html = generateHtml(summary);
+
+    expect(html).not.toContain('href="javascript:');
+    expect(html).toContain('href="#"');
+  });
+
+  it('uses safeUrl: valid-scheme URL with embedded quotes is HTML-escaped (attribute breakout blocked)', () => {
+    const xssResult: RepoResult = {
+      ...RESULT_WITH_FINDINGS,
+      findings: [
+        { ...FINDING_CRITICAL, url: 'https://example.com/" onclick="alert(1)' },
+      ],
+    };
+    const summary = buildSummary([xssResult], NOW);
+    const html = generateHtml(summary);
+
+    // The injected onclick must not appear as a real attribute
+    expect(html).not.toContain('onclick="alert(1)"');
+    // The quote must be entity-escaped
+    expect(html).toContain('&quot;');
   });
 
   it('shows findings count and unique CVE ID count in findings section header', () => {
@@ -341,5 +413,45 @@ describe('generateHtml', () => {
     expect(html).toContain('class="badge high"');
     expect(html).toContain('class="badge medium"');
     expect(html).toContain('class="badge low"');
+  });
+
+  it('renders blast-radius line when repos have CRITICAL/HIGH findings', () => {
+    const summary = buildSummary([RESULT_WITH_FINDINGS, RESULT_CLEAN], NOW);
+    const html = generateHtml(summary);
+
+    expect(html).toContain('class="blast-radius"');
+    expect(html).toContain('1 of 2 repositories affected');
+  });
+
+  it('renders blast-radius line when repos have errors', () => {
+    const summary = buildSummary([RESULT_CLEAN, RESULT_ERROR], NOW);
+    const html = generateHtml(summary);
+
+    expect(html).toContain('class="blast-radius"');
+    expect(html).toContain('1 scan error');
+  });
+
+  it('renders both affected and errors in blast-radius when both are present', () => {
+    const summary = buildSummary([RESULT_WITH_FINDINGS, RESULT_ERROR], NOW);
+    const html = generateHtml(summary);
+
+    expect(html).toContain('class="blast-radius"');
+    expect(html).toContain('affected');
+    expect(html).toContain('scan error');
+  });
+
+  it('does not render blast-radius line when no issues and no errors', () => {
+    const summary = buildSummary([RESULT_CLEAN], NOW);
+    const html = generateHtml(summary);
+
+    expect(html).not.toContain('class="blast-radius"');
+  });
+
+  it('wraps both tables in table-wrap div', () => {
+    const summary = buildSummary([RESULT_WITH_FINDINGS], NOW);
+    const html = generateHtml(summary);
+
+    const wrapCount = (html.match(/class="table-wrap"/g) ?? []).length;
+    expect(wrapCount).toBe(2);
   });
 });

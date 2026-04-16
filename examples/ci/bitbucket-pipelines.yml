@@ -1,11 +1,21 @@
 # Bitbucket Pipelines — SBOM Sentinel
 #
 # Required repository variables (Settings > Pipelines > Repository variables):
-#   BITBUCKET_TOKEN     — App Password or Repository Access Token for bitbucket.org repos
-#   BITBUCKET_USER      — your Bitbucket username
-#   GITHUB_TOKEN        — (optional) Personal Access Token for github.com repos
-#   GIT_TOKEN           — (optional) fallback token for other platforms
-#   SLACK_WEBHOOK_URL   — (optional) Slack webhook for notifications
+#   BITBUCKET_TOKEN          — App Password or Repository Access Token for bitbucket.org repos
+#   BITBUCKET_USER           — your Bitbucket username
+#   GITHUB_TOKEN             — (optional) Personal Access Token for github.com repos
+#   GIT_TOKEN                — (optional) fallback token for other platforms
+#   SLACK_WEBHOOK_URL        — (optional) Slack webhook for notifications
+#
+# Optional — persistent report storage:
+#   STORAGE_PROVIDER         — ibm-cos, google-drive, or ibm-cos,google-drive
+#   IBM_COS_ENDPOINT         — IBM COS S3 endpoint URL
+#   IBM_COS_BUCKET           — IBM COS bucket name
+#   IBM_COS_ACCESS_KEY_ID    — IBM COS HMAC access key ID
+#   IBM_COS_SECRET_ACCESS_KEY — IBM COS HMAC secret access key
+#   IBM_COS_PUBLIC_URL       — (optional) virtual-hosted public base URL
+#   GOOGLE_DRIVE_CREDENTIALS — path to service-account.json or inline JSON
+#   GOOGLE_DRIVE_FOLDER_ID   — (optional) Google Drive target folder ID
 #
 # Schedule configuration:
 #   Settings > Pipelines > Schedules → add a schedule for the branch that holds

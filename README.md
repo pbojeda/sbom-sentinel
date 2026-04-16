@@ -252,7 +252,7 @@ All credentials and sensitive settings are passed via environment variables. The
 | `SMTP_PASS` | No | — | SMTP password |
 | `EMAIL_FROM` | No | — | Sender address |
 | `EMAIL_TO` | No | — | Comma-separated recipient addresses |
-| `STORAGE_PROVIDER` | No | — | Enable persistent storage: `ibm-cos` or `google-drive` |
+| `STORAGE_PROVIDER` | No | — | Enable persistent storage. Comma-separated list: `ibm-cos`, `google-drive`, or both |
 | `IBM_COS_ENDPOINT` | * | — | IBM COS S3 endpoint URL |
 | `IBM_COS_BUCKET` | * | — | IBM COS bucket name |
 | `IBM_COS_ACCESS_KEY_ID` | * | — | IBM COS HMAC access key ID |
@@ -435,7 +435,7 @@ Configure:
 
 | Variable | Required | Description |
 |---|---|---|
-| `STORAGE_PROVIDER` | Yes | Set to `ibm-cos` |
+| `STORAGE_PROVIDER` | Yes | Set to `ibm-cos` (or `ibm-cos,google-drive` for both) |
 | `IBM_COS_ENDPOINT` | Yes | S3 endpoint URL (e.g. `https://s3.eu-de.cloud-object-storage.appdomain.cloud`) |
 | `IBM_COS_BUCKET` | Yes | Target bucket name |
 | `IBM_COS_ACCESS_KEY_ID` | Yes | HMAC access key ID |
@@ -472,15 +472,17 @@ Configure:
 
 | Variable | Required | Description |
 |---|---|---|
-| `STORAGE_PROVIDER` | Yes | Set to `google-drive` |
+| `STORAGE_PROVIDER` | Yes | Set to `google-drive` (or `ibm-cos,google-drive` for both) |
 | `GOOGLE_DRIVE_CREDENTIALS` | Yes | Path to a `service-account.json` file, or the JSON content as an inline string |
 | `GOOGLE_DRIVE_FOLDER_ID` | No | Target folder ID. Defaults to the service account's root drive. |
+
+Reports are organised under a `YYYY-MM-DD/` subfolder inside `GOOGLE_DRIVE_FOLDER_ID` (or Drive root). The subfolder is created automatically on first use and reused on subsequent runs the same day.
 
 **Google Cloud setup:**
 1. In [Google Cloud Console](https://console.cloud.google.com), create a service account
 2. Enable the **Google Drive API** and grant the `drive.file` scope
 3. Download the service account key as `service-account.json`
-4. Share the target Drive folder with the service account email
+4. Share the target Drive folder with the service account email as **Editor**
 
 ```bash
 STORAGE_PROVIDER=google-drive
@@ -490,9 +492,13 @@ GOOGLE_DRIVE_CREDENTIALS=/path/to/service-account.json
 GOOGLE_DRIVE_FOLDER_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs
 ```
 
+> **Google Workspace organisations:** If you see `Service Accounts do not have storage quota`, your org restricts service accounts from using personal Drive storage. Fix: create a **Shared Drive** (formerly Team Drive), add the service account email as a **Contributor**, and use the Shared Drive ID (or a folder within it) as `GOOGLE_DRIVE_FOLDER_ID`. Shared Drives have their own storage quota independent of user accounts.
+
 ### Storage behaviour
 
-- Reports are uploaded to `reports/<filename>` within the configured bucket or folder
+- **Multi-provider**: set `STORAGE_PROVIDER=ibm-cos,google-drive` to upload to both simultaneously. The first successful URL is used for notifications.
+- **IBM COS**: reports are uploaded to `reports/<filename>` within the configured bucket
+- **Google Drive**: reports are uploaded to `YYYY-MM-DD/<filename>` inside the configured folder (or root)
 - The HTML report URL is appended to Slack and email notifications as a "View full report" link
 - If the optional package is not installed, sbom-sentinel warns and continues without uploading
 - If the upload fails for any reason, a warning is logged and the scan continues without a report URL

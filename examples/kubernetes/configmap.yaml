@@ -7,7 +7,7 @@ data:
   sbom-sentinel.config.json: |
     {
       "$schema": "https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json",
-      "manufacturer": "My Company, S.L.",
+      "manufacturer": "My Company",
       "outputDir": "/app/artifacts",
       "notifications": {
         "onVulnerabilities": true,

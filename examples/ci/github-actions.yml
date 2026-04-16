@@ -56,6 +56,15 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          # Optional — persistent report storage (remove providers you don't use)
+          # STORAGE_PROVIDER: ibm-cos,google-drive
+          # IBM_COS_ENDPOINT: ${{ secrets.IBM_COS_ENDPOINT }}
+          # IBM_COS_BUCKET: ${{ secrets.IBM_COS_BUCKET }}
+          # IBM_COS_ACCESS_KEY_ID: ${{ secrets.IBM_COS_ACCESS_KEY_ID }}
+          # IBM_COS_SECRET_ACCESS_KEY: ${{ secrets.IBM_COS_SECRET_ACCESS_KEY }}
+          # IBM_COS_PUBLIC_URL: ${{ secrets.IBM_COS_PUBLIC_URL }}
+          # GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          # GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
         run: |
           if [ -n "${{ github.event.inputs.repo }}" ]; then
             sbom-sentinel scan --repo "${{ github.event.inputs.repo }}"

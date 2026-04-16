@@ -24,6 +24,15 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
       EMAIL_TO: ${EMAIL_TO:-}
+      # Optional — persistent report storage (remove providers you don't use)
+      # STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}   # ibm-cos, google-drive, or ibm-cos,google-drive
+      # IBM_COS_ENDPOINT: ${IBM_COS_ENDPOINT:-}
+      # IBM_COS_BUCKET: ${IBM_COS_BUCKET:-}
+      # IBM_COS_ACCESS_KEY_ID: ${IBM_COS_ACCESS_KEY_ID:-}
+      # IBM_COS_SECRET_ACCESS_KEY: ${IBM_COS_SECRET_ACCESS_KEY:-}
+      # IBM_COS_PUBLIC_URL: ${IBM_COS_PUBLIC_URL:-}
+      # GOOGLE_DRIVE_CREDENTIALS: ${GOOGLE_DRIVE_CREDENTIALS:-}
+      # GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
       # Output directory (inside container)
       SENTINEL_OUTPUT_DIR: /app/artifacts
       LOG_LEVEL: ${LOG_LEVEL:-info}
