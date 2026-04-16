@@ -22,6 +22,7 @@ Designed to run as a scheduled task (Kubernetes CronJob, cron, CI/CD pipeline) a
 - Supports **private repositories** on GitHub and Bitbucket with per-platform token validation at startup
 - Warns 15 days before a configured token expires and sends a notification via all enabled channels
 - Supports custom SBOM generation commands per repository (`mode: "command"`)
+- Uploads HTML and JSON reports to **IBM Cloud Object Storage** or **Google Drive** and includes a direct link in notifications
 - Zero npm runtime dependencies — native Node 20 fetch, no axios, no dotenv
 - Supports `node`, `swift`, `gradle`, `python`, `go`, `rust` ecosystems via cdxgen
 
@@ -251,6 +252,15 @@ All credentials and sensitive settings are passed via environment variables. The
 | `SMTP_PASS` | No | — | SMTP password |
 | `EMAIL_FROM` | No | — | Sender address |
 | `EMAIL_TO` | No | — | Comma-separated recipient addresses |
+| `STORAGE_PROVIDER` | No | — | Enable persistent storage: `ibm-cos` or `google-drive` |
+| `IBM_COS_ENDPOINT` | * | — | IBM COS S3 endpoint URL |
+| `IBM_COS_BUCKET` | * | — | IBM COS bucket name |
+| `IBM_COS_ACCESS_KEY_ID` | * | — | IBM COS HMAC access key ID |
+| `IBM_COS_SECRET_ACCESS_KEY` | * | — | IBM COS HMAC secret access key |
+| `IBM_COS_REGION` | No | `us-south` | IBM COS region |
+| `IBM_COS_PUBLIC_URL` | No | — | Virtual-hosted public base URL for IBM COS (bucket name in domain) |
+| `GOOGLE_DRIVE_CREDENTIALS` | * | — | Path to `service-account.json` or inline JSON string |
+| `GOOGLE_DRIVE_FOLDER_ID` | No | — | Google Drive folder ID for uploaded files |
 | `SENTINEL_CONFIG` | No | `./sbom-sentinel.config.json` | Path to the config file |
 | `SENTINEL_OUTPUT_DIR` | No | `./artifacts` | Output directory (overrides `outputDir` in config) |
 | `SENTINEL_REPO` | No | — | Scan only the named repository (overrides `--repo`) |
@@ -404,6 +414,89 @@ export SMTP_PASS=secret
 export EMAIL_FROM=alerts@example.com
 export EMAIL_TO=security@example.com,devops@example.com
 ```
+
+---
+
+## Persistent report storage
+
+After each scan, sbom-sentinel can automatically upload the HTML and JSON summary reports to a cloud storage provider. The public URL is appended to Slack and email notifications as a **"View full report"** link.
+
+Both providers are **optional dependencies** — the base install is unaffected. Install only the package you need.
+
+### IBM Cloud Object Storage (S3-compatible)
+
+Install the AWS SDK v3:
+
+```bash
+npm install @aws-sdk/client-s3
+```
+
+Configure:
+
+| Variable | Required | Description |
+|---|---|---|
+| `STORAGE_PROVIDER` | Yes | Set to `ibm-cos` |
+| `IBM_COS_ENDPOINT` | Yes | S3 endpoint URL (e.g. `https://s3.eu-de.cloud-object-storage.appdomain.cloud`) |
+| `IBM_COS_BUCKET` | Yes | Target bucket name |
+| `IBM_COS_ACCESS_KEY_ID` | Yes | HMAC access key ID |
+| `IBM_COS_SECRET_ACCESS_KEY` | Yes | HMAC secret access key |
+| `IBM_COS_REGION` | No | Region (default: `us-south`) |
+| `IBM_COS_PUBLIC_URL` | No | Virtual-hosted public base URL (e.g. `https://my-bucket.s3.eu-de.cloud-object-storage.appdomain.cloud`). When set, the bucket name is omitted from the object path. |
+
+**IBM Cloud setup:**
+1. Create a bucket in [IBM Cloud Object Storage](https://cloud.ibm.com/objectstorage/)
+2. Under **Access policies → Public access**, enable **Object Reader** to allow anonymous reads by URL
+3. Create a **Service credential** with **Writer** role and enable **HMAC credentials**
+4. Use the generated `access_key_id` and `secret_access_key` as your env vars
+
+```bash
+STORAGE_PROVIDER=ibm-cos
+IBM_COS_ENDPOINT=https://s3.eu-de.cloud-object-storage.appdomain.cloud
+IBM_COS_BUCKET=sbom-sentinel-reports
+IBM_COS_ACCESS_KEY_ID=<hmac_access_key_id>
+IBM_COS_SECRET_ACCESS_KEY=<hmac_secret_access_key>
+IBM_COS_REGION=eu-de
+# optional virtual-hosted public URL (bucket name is in the domain):
+IBM_COS_PUBLIC_URL=https://sbom-sentinel-reports.s3.eu-de.cloud-object-storage.appdomain.cloud
+```
+
+### Google Drive
+
+Install the Google APIs client:
+
+```bash
+npm install googleapis
+```
+
+Configure:
+
+| Variable | Required | Description |
+|---|---|---|
+| `STORAGE_PROVIDER` | Yes | Set to `google-drive` |
+| `GOOGLE_DRIVE_CREDENTIALS` | Yes | Path to a `service-account.json` file, or the JSON content as an inline string |
+| `GOOGLE_DRIVE_FOLDER_ID` | No | Target folder ID. Defaults to the service account's root drive. |
+
+**Google Cloud setup:**
+1. In [Google Cloud Console](https://console.cloud.google.com), create a service account
+2. Enable the **Google Drive API** and grant the `drive.file` scope
+3. Download the service account key as `service-account.json`
+4. Share the target Drive folder with the service account email
+
+```bash
+STORAGE_PROVIDER=google-drive
+GOOGLE_DRIVE_CREDENTIALS=/path/to/service-account.json
+# or inline JSON:
+# GOOGLE_DRIVE_CREDENTIALS={"client_email":"sa@project.iam.gserviceaccount.com","private_key":"..."}
+GOOGLE_DRIVE_FOLDER_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs
+```
+
+### Storage behaviour
+
+- Reports are uploaded to `reports/<filename>` within the configured bucket or folder
+- The HTML report URL is appended to Slack and email notifications as a "View full report" link
+- If the optional package is not installed, sbom-sentinel warns and continues without uploading
+- If the upload fails for any reason, a warning is logged and the scan continues without a report URL
+- If `STORAGE_PROVIDER` is set but required credentials are missing, the scan aborts at startup with a clear error listing the missing variables
 
 ---
 
