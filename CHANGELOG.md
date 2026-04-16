@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] — 2026-04-16
+
+### Added
+
+- **Persistent report storage** — set `STORAGE_PROVIDER=ibm-cos` or `STORAGE_PROVIDER=google-drive` to automatically upload the HTML and JSON summary reports after each scan. The public URL is appended to Slack and email notifications as a "View full report" link.
+  - **IBM COS** (`@aws-sdk/client-s3` optional dep): uploads via S3-compatible HMAC credentials. Required env vars: `IBM_COS_ENDPOINT`, `IBM_COS_BUCKET`, `IBM_COS_ACCESS_KEY_ID`, `IBM_COS_SECRET_ACCESS_KEY`. Optional: `IBM_COS_REGION` (default: `us-south`), `IBM_COS_PUBLIC_URL`.
+  - **Google Drive** (`googleapis` optional dep): uploads via service account credentials. Required env var: `GOOGLE_DRIVE_CREDENTIALS` (path to `service-account.json` or inline JSON). Optional: `GOOGLE_DRIVE_FOLDER_ID`.
+  - Both providers are optional dependencies — the base install is unaffected. Install the provider package only when needed.
+  - Storage failures are non-fatal: a warning is logged and the scan continues; notifications are sent without a report URL.
+  - Fail-fast validation: if `STORAGE_PROVIDER` is set but required credentials are missing, the scan aborts before any clone with a clear error message.
+- **`Storage provider` line in `--dry-run` output** — shows the configured provider or `not set`.
+- **`/cross-model-review` command** (`.claude/commands/cross-model-review.md`) — reusable skill to run a cross-model implementation plan review using Gemini CLI and Codex CLI in parallel.
+
+---
+
 ## [0.3.0] — 2026-04-16
 
 ### Changed
@@ -72,7 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full unit test suite with Vitest (121 tests, zero external tool calls in tests)
 - Examples: Docker, Kubernetes CronJob, GitHub Actions, Bitbucket Pipelines
 
-[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.1.0...v0.2.0

@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import type { SentinelConfig, RepoConfig } from './types.js';
 import { detectPlatform, repoTokenEnvKey } from './git.js';
+import type { StorageConfig } from './storage.js';
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ export interface LoadedConfig {
   logLevel: string;
   dryRun: boolean;
   targetRepo?: string;
+  storageConfig?: StorageConfig;
 }
 
 // ── .env loader (no dotenv dependency) ───────────────────────────────────────
@@ -215,7 +217,62 @@ export function loadConfig(
     ? process.env['EMAIL_TO'].split(',').map((s) => s.trim()).filter(Boolean)
     : [];
 
-  // Step 9 — Validate credentials for private repositories (fail fast before any clone)
+  // Step 9 — Build optional storage config (only when STORAGE_PROVIDER is set)
+  const storageProvider = process.env['STORAGE_PROVIDER'];
+  let storageConfig: StorageConfig | undefined;
+
+  if (storageProvider === 'ibm-cos') {
+    const endpoint     = process.env['IBM_COS_ENDPOINT'];
+    const bucket       = process.env['IBM_COS_BUCKET'];
+    const accessKeyId  = process.env['IBM_COS_ACCESS_KEY_ID'];
+    const secretKey    = process.env['IBM_COS_SECRET_ACCESS_KEY'];
+
+    const missing = [
+      !endpoint    && 'IBM_COS_ENDPOINT',
+      !bucket      && 'IBM_COS_BUCKET',
+      !accessKeyId && 'IBM_COS_ACCESS_KEY_ID',
+      !secretKey   && 'IBM_COS_SECRET_ACCESS_KEY',
+    ].filter(Boolean) as string[];
+
+    if (missing.length > 0) {
+      throw new Error(
+        `STORAGE_PROVIDER=ibm-cos is set but the following required variables are missing:\n` +
+        missing.map((k) => `  ${k}`).join('\n') +
+        `\nSet them in your environment or .env file.`,
+      );
+    }
+
+    storageConfig = {
+      provider: 'ibm-cos',
+      endpoint,
+      bucket,
+      accessKeyId,
+      secretAccessKey: secretKey,
+      region: process.env['IBM_COS_REGION'] ?? 'us-south',
+      publicBaseUrl: process.env['IBM_COS_PUBLIC_URL'],
+    };
+  } else if (storageProvider === 'google-drive') {
+    const credentials = process.env['GOOGLE_DRIVE_CREDENTIALS'];
+
+    if (!credentials) {
+      throw new Error(
+        `STORAGE_PROVIDER=google-drive is set but GOOGLE_DRIVE_CREDENTIALS is missing.\n` +
+        `Set it to a path to your service-account.json file, or the JSON content as a string.`,
+      );
+    }
+
+    storageConfig = {
+      provider: 'google-drive',
+      credentials,
+      folderId: process.env['GOOGLE_DRIVE_FOLDER_ID'],
+    };
+  } else if (storageProvider) {
+    throw new Error(
+      `Unknown STORAGE_PROVIDER="${storageProvider}". Supported values: ibm-cos, google-drive.`,
+    );
+  }
+
+  // Step 10 — Validate credentials for private repositories (fail fast before any clone)
   for (const repo of config.repos) {
     if (!repo.private) continue;
     const platform = detectPlatform(repo.cloneUrl);
@@ -258,5 +315,6 @@ export function loadConfig(
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     dryRun: args.dryRun,
     targetRepo,
+    storageConfig,
   };
 }

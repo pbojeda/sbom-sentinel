@@ -30,6 +30,10 @@ const ENV_KEYS = [
   'SLACK_WEBHOOK_URL', 'SMTP_HOST', 'SMTP_PORT',
   'SMTP_USER', 'SMTP_PASS', 'EMAIL_FROM', 'EMAIL_TO', 'SENTINEL_CONFIG',
   'SENTINEL_OUTPUT_DIR', 'SENTINEL_REPO', 'LOG_LEVEL',
+  'STORAGE_PROVIDER',
+  'IBM_COS_ENDPOINT', 'IBM_COS_BUCKET', 'IBM_COS_ACCESS_KEY_ID', 'IBM_COS_SECRET_ACCESS_KEY',
+  'IBM_COS_REGION', 'IBM_COS_PUBLIC_URL',
+  'GOOGLE_DRIVE_CREDENTIALS', 'GOOGLE_DRIVE_FOLDER_ID',
 ];
 
 let savedEnv: Record<string, string | undefined> = {};
@@ -357,6 +361,104 @@ describe('loadConfig', () => {
       BITBUCKET_TOKEN: '2027-04-15',
       GITHUB_TOKEN: '2027-06-01',
     });
+    rmSync(dir, { recursive: true });
+  });
+
+  // ── storageConfig ───────────────────────────────────────────────────────────
+
+  it('storageConfig is undefined when STORAGE_PROVIDER is not set', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+
+    const result = loadConfig([], dir);
+
+    expect(result.storageConfig).toBeUndefined();
+    rmSync(dir, { recursive: true });
+  });
+
+  it('builds storageConfig for ibm-cos when all required vars are set', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['STORAGE_PROVIDER']          = 'ibm-cos';
+    process.env['IBM_COS_ENDPOINT']          = 'https://s3.eu-de.cloud-object-storage.appdomain.cloud';
+    process.env['IBM_COS_BUCKET']            = 'my-bucket';
+    process.env['IBM_COS_ACCESS_KEY_ID']     = 'key-id';
+    process.env['IBM_COS_SECRET_ACCESS_KEY'] = 'secret-key';
+    process.env['IBM_COS_REGION']            = 'eu-de';
+    process.env['IBM_COS_PUBLIC_URL']        = 'https://public.example.com';
+
+    const result = loadConfig([], dir);
+
+    expect(result.storageConfig).toMatchObject({
+      provider: 'ibm-cos',
+      endpoint: 'https://s3.eu-de.cloud-object-storage.appdomain.cloud',
+      bucket: 'my-bucket',
+      accessKeyId: 'key-id',
+      secretAccessKey: 'secret-key',
+      region: 'eu-de',
+      publicBaseUrl: 'https://public.example.com',
+    });
+    rmSync(dir, { recursive: true });
+  });
+
+  it('defaults IBM_COS_REGION to us-south when not set', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['STORAGE_PROVIDER']          = 'ibm-cos';
+    process.env['IBM_COS_ENDPOINT']          = 'https://s3.eu-de.cloud-object-storage.appdomain.cloud';
+    process.env['IBM_COS_BUCKET']            = 'my-bucket';
+    process.env['IBM_COS_ACCESS_KEY_ID']     = 'key-id';
+    process.env['IBM_COS_SECRET_ACCESS_KEY'] = 'secret-key';
+
+    const result = loadConfig([], dir);
+
+    expect(result.storageConfig?.region).toBe('us-south');
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when STORAGE_PROVIDER=ibm-cos but required vars are missing', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['STORAGE_PROVIDER'] = 'ibm-cos';
+    // No IBM_COS_* vars set
+
+    expect(() => loadConfig([], dir)).toThrow(/IBM_COS_ENDPOINT/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('builds storageConfig for google-drive when credentials are set', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['STORAGE_PROVIDER']       = 'google-drive';
+    process.env['GOOGLE_DRIVE_CREDENTIALS'] = '/secrets/service-account.json';
+    process.env['GOOGLE_DRIVE_FOLDER_ID']  = 'folder123';
+
+    const result = loadConfig([], dir);
+
+    expect(result.storageConfig).toMatchObject({
+      provider: 'google-drive',
+      credentials: '/secrets/service-account.json',
+      folderId: 'folder123',
+    });
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when STORAGE_PROVIDER=google-drive but GOOGLE_DRIVE_CREDENTIALS is missing', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['STORAGE_PROVIDER'] = 'google-drive';
+    // No GOOGLE_DRIVE_CREDENTIALS set
+
+    expect(() => loadConfig([], dir)).toThrow(/GOOGLE_DRIVE_CREDENTIALS/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when STORAGE_PROVIDER is an unknown value', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [VALID_REPO] });
+    process.env['STORAGE_PROVIDER'] = 'dropbox';
+
+    expect(() => loadConfig([], dir)).toThrow(/Unknown STORAGE_PROVIDER/);
     rmSync(dir, { recursive: true });
   });
 });

@@ -25,8 +25,9 @@ vi.mock('../../src/git.js', async (importOriginal) => {
 
 vi.mock('../../src/sbom.js',    () => ({ generateSbom:   vi.fn() }));
 vi.mock('../../src/scanner.js', () => ({ scanSbom:       vi.fn() }));
-vi.mock('../../src/report.js',  () => ({ buildSummary:   vi.fn(() => ({})), generateReports: vi.fn(() => ({})) }));
-vi.mock('../../src/notify.js',  () => ({ notify: vi.fn(), notifyTokenExpiry: vi.fn() }));
+vi.mock('../../src/report.js',   () => ({ buildSummary:   vi.fn(() => ({})), generateReports: vi.fn(() => ({})) }));
+vi.mock('../../src/notify.js',   () => ({ notify: vi.fn(), notifyTokenExpiry: vi.fn() }));
+vi.mock('../../src/storage.js',  () => ({ uploadReports: vi.fn() }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

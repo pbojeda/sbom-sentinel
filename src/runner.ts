@@ -9,6 +9,7 @@ import { buildSummary, generateReports } from './report.js';
 import type { ReportFiles } from './report.js';
 import { notify, notifyTokenExpiry } from './notify.js';
 import type { NotifyConfig } from './notify.js';
+import { uploadReports } from './storage.js';
 import type { LoadedConfig } from './config.js';
 import type { RepoConfig, RepoResult, GlobalSummary, TokenExpiryWarning } from './types.js';
 
@@ -148,9 +149,16 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
 
   const reports = generateReports(globalSummary, config.outputDir);
 
+  // ── 6b. Upload to storage (optional) ───────────────────────────────────────
+
+  let reportUrl: string | undefined;
+  if (config.storageConfig) {
+    reportUrl = await uploadReports(reports, config.storageConfig);
+  }
+
   // ── 7. Notify ──────────────────────────────────────────────────────────────
 
-  await notify(globalSummary, notifyConfig);
+  await notify(globalSummary, { ...notifyConfig, reportUrl });
 
   // ── 8. Exit code ───────────────────────────────────────────────────────────
   // Priority: 2 (errors) > 1 (vulns) > 0 (ok)
@@ -252,6 +260,7 @@ function executeDryRun(config: LoadedConfig): RunResult {
   log(`Bitbucket token      : ${!!config.bitbucketToken}`);
   log(`Slack webhook        : ${config.slackWebhookUrl ? 'configured' : 'not set'}`);
   log(`Email recipients     : ${config.emailTo.length > 0 ? config.emailTo.join(', ') : 'not set'}`);
+  log(`Storage provider     : ${config.storageConfig ? config.storageConfig.provider : 'not set'}`);
 
   const tokenExpiry = config.config.tokenExpiry ?? {};
   if (Object.keys(tokenExpiry).length > 0) {
