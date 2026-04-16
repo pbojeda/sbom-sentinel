@@ -90,7 +90,7 @@ describe('uploadReports — ibm-cos', () => {
     );
   });
 
-  it('uses publicBaseUrl when set', async () => {
+  it('uses publicBaseUrl without bucket prefix (virtual-hosted style)', async () => {
     vi.doMock('@aws-sdk/client-s3', () => ({
       S3Client: MockS3Client,
       PutObjectCommand: MockPutObjectCommand,
@@ -99,16 +99,17 @@ describe('uploadReports — ibm-cos', () => {
     const { uploadReports: upload } = await import('../../src/storage.js');
     const config: StorageConfig = {
       provider: 'ibm-cos',
-      endpoint: 'https://s3.eu-de.cloud-object-storage.appdomain.cloud',
+      endpoint: 'https://s3.eu-es.cloud-object-storage.appdomain.cloud',
       bucket: 'my-bucket',
       accessKeyId: 'key',
       secretAccessKey: 'secret',
-      publicBaseUrl: 'https://my-bucket.public.eu-de.cloud-object-storage.appdomain.cloud',
+      publicBaseUrl: 'https://my-bucket.s3.eu-es.cloud-object-storage.appdomain.cloud',
     };
 
     const url = await upload(REPORTS, config);
+    // virtual-hosted: bucket is already in the domain, no bucket prefix in path
     expect(url).toBe(
-      'https://my-bucket.public.eu-de.cloud-object-storage.appdomain.cloud/my-bucket/reports/summary__2024-04-14.html',
+      'https://my-bucket.s3.eu-es.cloud-object-storage.appdomain.cloud/reports/summary__2024-04-14.html',
     );
   });
 

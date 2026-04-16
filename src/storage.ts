@@ -106,8 +106,13 @@ async function uploadToIbmCos(
   }));
   dim(`  COS: uploaded ${basename(reports.json)}`);
 
+  // When publicBaseUrl is set it uses virtual-hosted style (bucket name is in the domain),
+  // so the key path must NOT include the bucket prefix.
+  // When falling back to the endpoint, path-style is used and the bucket must be in the path.
   const base = (config.publicBaseUrl ?? config.endpoint ?? '').replace(/\/$/, '');
-  const url = `${base}/${config.bucket}/${htmlKey}`;
+  const url = config.publicBaseUrl
+    ? `${base}/${htmlKey}`
+    : `${base}/${config.bucket}/${htmlKey}`;
   ok(`Report uploaded to IBM COS: ${url}`);
   return url;
 }
