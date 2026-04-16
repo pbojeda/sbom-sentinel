@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] — 2026-04-16
+
+### Changed
+
+- **Refactored Slack and email notification messages** — messages are now concise summaries instead of verbose per-finding detail. Slack shows: status headline, global severity totals, affected repositories with CRITICAL/HIGH counts, and failed repositories with error messages. Email uses the same structure as an exportable `buildEmailBody()` function (previously an unexported wrapper around the full text report).
+- **Added `reportUrl` field to `NotifyConfig`** — when set, a "View full report" link is appended to both Slack and email messages. This field is the hook for the upcoming persistent storage feature (IBM COS / Google Drive) that will provide a public URL for the HTML report.
+- **`buildEmailBody` is now exported** — available for testing and for custom notification integrations via the programmatic API.
+
+---
+
 ## [0.2.1] — 2026-04-15
 
 ### Changed
@@ -62,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full unit test suite with Vitest (121 tests, zero external tool calls in tests)
 - Examples: Docker, Kubernetes CronJob, GitHub Actions, Bitbucket Pipelines
 
-[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/pbojeda/sbom-sentinel/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pbojeda/sbom-sentinel/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pbojeda/sbom-sentinel/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pbojeda/sbom-sentinel/releases/tag/v0.1.0

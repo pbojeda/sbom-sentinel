@@ -373,6 +373,13 @@ sbom-sentinel --help      # Print usage
 
 sbom-sentinel uses Node 20's native `fetch` — no extra dependencies.
 
+**Slack message format:**
+- Status headline (CRITICAL/HIGH DETECTED or SCAN ERRORS)
+- Global totals by severity
+- Affected repositories with CRITICAL and HIGH counts
+- Failed repositories with error message
+- Optional link to the full HTML report (when `reportUrl` is set — see persistent storage)
+
 ### Email (SMTP)
 
 Email requires the optional `nodemailer` package:

@@ -4,6 +4,7 @@ import {
   notifyTokenExpiry,
   buildSlackMessage,
   buildEmailSubject,
+  buildEmailBody,
   buildTokenExpirySlackMessage,
   buildTokenExpiryEmailBody,
 } from '../../src/notify.js';
@@ -18,11 +19,6 @@ vi.mock('../../src/logger.js', () => ({
   log:  vi.fn(),
   dim:  vi.fn(),
   run:  vi.fn(),
-}));
-
-// Mock report.ts (used by notify for email body)
-vi.mock('../../src/report.js', () => ({
-  generateText: vi.fn(() => 'text report'),
 }));
 
 import { warn, err } from '../../src/logger.js';
@@ -205,9 +201,15 @@ describe('buildSlackMessage', () => {
     expect(msg).toContain('my-backend');
   });
 
-  it('includes CVE IDs of top findings', () => {
+  it('includes report URL when provided', () => {
+    const msg = buildSlackMessage(SUMMARY_CRITICAL, 'https://storage.example.com/report.html');
+    expect(msg).toContain('https://storage.example.com/report.html');
+    expect(msg).toContain('View full report');
+  });
+
+  it('does not include report URL line when not provided', () => {
     const msg = buildSlackMessage(SUMMARY_CRITICAL);
-    expect(msg).toContain('CVE-2022-24434');
+    expect(msg).not.toContain('View full report');
   });
 
   it('includes failed repo and error message', () => {
@@ -309,6 +311,59 @@ describe('notifyTokenExpiry — Slack', () => {
   it('does not throw on network failure', async () => {
     mockFetch.mockRejectedValue(new Error('Network error'));
     await expect(notifyTokenExpiry(warnings, { slackWebhookUrl: WEBHOOK_URL })).resolves.not.toThrow();
+  });
+});
+
+// ── buildEmailBody ────────────────────────────────────────────────────────────
+
+describe('buildEmailBody', () => {
+  it('includes CRITICAL headline for summaries with critical findings', () => {
+    expect(buildEmailBody(SUMMARY_CRITICAL)).toContain('CRITICAL / HIGH VULNERABILITIES DETECTED');
+  });
+
+  it('includes ERRORS headline for summaries with scan errors', () => {
+    expect(buildEmailBody(SUMMARY_ERRORS)).toContain('SCAN ERRORS');
+  });
+
+  it('includes the report date', () => {
+    expect(buildEmailBody(SUMMARY_CRITICAL)).toContain('2024-04-14');
+  });
+
+  it('includes totals when there are findings', () => {
+    const body = buildEmailBody(SUMMARY_CRITICAL);
+    expect(body).toContain('1 CRITICAL');
+    expect(body).toContain('2 HIGH');
+  });
+
+  it('includes affected repo names and counts', () => {
+    const body = buildEmailBody(SUMMARY_CRITICAL);
+    expect(body).toContain('my-backend');
+    expect(body).toContain('1 CRITICAL');
+    expect(body).toContain('2 HIGH');
+  });
+
+  it('includes failed repo and error message', () => {
+    const body = buildEmailBody(SUMMARY_ERRORS);
+    expect(body).toContain('my-broken-repo');
+    expect(body).toContain('authentication failed');
+  });
+
+  it('includes report URL when provided', () => {
+    const body = buildEmailBody(SUMMARY_CRITICAL, 'https://storage.example.com/report.html');
+    expect(body).toContain('https://storage.example.com/report.html');
+    expect(body).toContain('View full report');
+  });
+
+  it('falls back to output-directory note when no URL provided', () => {
+    const body = buildEmailBody(SUMMARY_CRITICAL);
+    expect(body).toContain('output directory');
+    expect(body).not.toContain('View full report');
+  });
+
+  it('includes attribution footer', () => {
+    const body = buildEmailBody(SUMMARY_CRITICAL);
+    expect(body).toContain('sbom-sentinel');
+    expect(body).toContain('github.com/pbojeda/sbom-sentinel');
   });
 });
 

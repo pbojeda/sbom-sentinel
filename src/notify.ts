@@ -1,11 +1,12 @@
 import { warn, err, ok } from './logger.js';
-import { generateText } from './report.js';
 import { SEVERITY_ORDER } from './types.js';
 import type { GlobalSummary, TokenExpiryWarning } from './types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export interface NotifyConfig {
+  /** Optional public URL for the HTML report — included in notifications when set. */
+  reportUrl?: string;
   slackWebhookUrl?: string;
   smtpHost?: string;
   smtpPort?: number;
@@ -41,7 +42,7 @@ export async function notify(summary: GlobalSummary, config: NotifyConfig): Prom
 
   // Slack — native fetch (Node 20), no extra dependencies
   if (notifCfg.slack?.enabled !== false && config.slackWebhookUrl) {
-    tasks.push(sendSlack(config.slackWebhookUrl, buildSlackMessage(summary)));
+    tasks.push(sendSlack(config.slackWebhookUrl, buildSlackMessage(summary, config.reportUrl)));
   }
 
   // Email — optional nodemailer
@@ -51,7 +52,7 @@ export async function notify(summary: GlobalSummary, config: NotifyConfig): Prom
     (config.emailTo?.length ?? 0) > 0;
 
   if (emailEnabled) {
-    tasks.push(sendEmailRaw(buildEmailSubject(summary), buildEmailBody(summary), config));
+    tasks.push(sendEmailRaw(buildEmailSubject(summary), buildEmailBody(summary, config.reportUrl), config));
   }
 
   await Promise.all(tasks);
@@ -152,7 +153,7 @@ async function sendSlack(webhookUrl: string, text: string): Promise<void> {
 /**
  * Builds the plain-text Slack message. Exported for testing.
  */
-export function buildSlackMessage(summary: GlobalSummary): string {
+export function buildSlackMessage(summary: GlobalSummary, reportUrl?: string): string {
   const lines: string[] = [];
 
   if (summary.hasCriticalOrHigh) {
@@ -172,23 +173,12 @@ export function buildSlackMessage(summary: GlobalSummary): string {
     .join('  |  ');
   if (totalsLine) lines.push(`Totals: ${totalsLine}`);
 
-  // Repos with CRITICAL/HIGH
+  // Affected repos — counts only, no per-finding detail
   if (summary.reposWithIssues.length > 0) {
     lines.push('');
     lines.push('Affected repositories:');
     for (const r of summary.reposWithIssues) {
       lines.push(`• *${r.repo}* (${r.branch}): ${r.critical} CRITICAL, ${r.high} HIGH`);
-      // Show top findings
-      const top = r.findings
-        .filter((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH')
-        .slice(0, 5);
-      for (const f of top) {
-        lines.push(`  - ${f.id} ${f.pkg} ${f.installed} [${f.severity}]`);
-      }
-      if (r.findings.filter((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH').length > 5) {
-        const rest = r.findings.filter((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH').length - 5;
-        lines.push(`  - … and ${rest} more`);
-      }
     }
   }
 
@@ -199,6 +189,11 @@ export function buildSlackMessage(summary: GlobalSummary): string {
     for (const e of summary.reposWithErrors) {
       lines.push(`• *${e.repo}* (${e.branch}): ${e.errorMessage}`);
     }
+  }
+
+  if (reportUrl) {
+    lines.push('');
+    lines.push(`View full report: ${reportUrl}`);
   }
 
   return lines.join('\n');
@@ -267,7 +262,57 @@ export function buildEmailSubject(summary: GlobalSummary): string {
   return parts.join(' ');
 }
 
-function buildEmailBody(summary: GlobalSummary): string {
-  return generateText(summary);
+/**
+ * Builds the concise plain-text email body. Exported for testing.
+ */
+export function buildEmailBody(summary: GlobalSummary, reportUrl?: string): string {
+  const lines: string[] = [];
+
+  if (summary.hasCriticalOrHigh) {
+    lines.push('SBOM Sentinel — CRITICAL / HIGH VULNERABILITIES DETECTED');
+  }
+  if (summary.hasErrors) {
+    lines.push('SBOM Sentinel — SCAN ERRORS');
+  }
+
+  lines.push(`Date: ${summary.date}`);
+  lines.push('');
+
+  const totalsLine = SEVERITY_ORDER
+    .filter((s) => summary.totals[s] > 0)
+    .map((s) => `${summary.totals[s]} ${s}`)
+    .join('  |  ');
+  if (totalsLine) lines.push(`Totals: ${totalsLine}`);
+
+  if (summary.reposWithIssues.length > 0) {
+    lines.push('');
+    lines.push('Affected repositories:');
+    for (const r of summary.reposWithIssues) {
+      lines.push(`  ${r.repo} (${r.branch}): ${r.critical} CRITICAL, ${r.high} HIGH`);
+    }
+  }
+
+  if (summary.reposWithErrors.length > 0) {
+    lines.push('');
+    lines.push('Failed repositories:');
+    for (const e of summary.reposWithErrors) {
+      lines.push(`  ${e.repo} (${e.branch}): ${e.errorMessage}`);
+    }
+  }
+
+  if (reportUrl) {
+    lines.push('');
+    lines.push(`View full report: ${reportUrl}`);
+  } else {
+    lines.push('');
+    lines.push('The full report has been written to your configured output directory.');
+  }
+
+  lines.push('');
+  lines.push('---');
+  lines.push(`Generated at: ${summary.generatedAt}`);
+  lines.push('sbom-sentinel — https://github.com/pbojeda/sbom-sentinel');
+
+  return lines.join('\n');
 }
 
