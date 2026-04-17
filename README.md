@@ -38,11 +38,13 @@ brew install aquasecurity/trivy/trivy
 # 2. Install sbom-sentinel
 npm install -g sbom-sentinel
 
-# 3. Create a starter config
-sbom-sentinel init
+# 3. Scaffold a new project with the interactive wizard
+sbom-sentinel init                  # in the current directory
+sbom-sentinel init ./my-audit-proj  # or create a new directory
 
-# 4. Edit sbom-sentinel.config.json and add your repos, then:
-GIT_TOKEN=your-token sbom-sentinel scan
+# 4. Fill in your credentials (.env) and run:
+sbom-sentinel scan --dry-run
+sbom-sentinel scan
 ```
 
 ---
@@ -100,7 +102,7 @@ const { summary, exitCode } = await scan(config);
 
 ### Config file
 
-Create `sbom-sentinel.config.json` in your working directory (or run `sbom-sentinel init`):
+Run `sbom-sentinel init` to scaffold the full project interactively, or create `sbom-sentinel.config.json` manually:
 
 ```json
 {
@@ -303,12 +305,30 @@ sbom-sentinel scan --repo my-backend
 sbom-sentinel scan --config /path/to/my-config.json
 ```
 
-#### `init` — Generate a starter config
+#### `init` — Scaffold a new project
+
+Interactive wizard that asks questions and generates a complete, tailored project.
 
 ```bash
-sbom-sentinel init
-# Creates ./sbom-sentinel.config.json in the current directory
+sbom-sentinel init                  # scaffold in the current directory
+sbom-sentinel init ./my-audit-proj  # create a new directory and scaffold inside it
 ```
+
+The wizard asks:
+
+1. **Project name** — used as `manufacturer` in the config
+2. **Repositories** — add as many as needed (name, clone URL, branch, type)
+3. **Slack notifications** — yes/no
+4. **Report storage** — `none`, `ibm-cos`, `google-drive`, or `both`
+5. **Kubernetes manifests** — yes/no (namespace, schedule, image)
+
+Generated files:
+- `sbom-sentinel.config.json` — fully populated with your repos and settings
+- `.env.example` — only the credential vars relevant to your platforms and storage choices
+- `.gitignore` — pre-configured to exclude `.env` and `artifacts/`
+- `kubernetes/cronjob.yaml`, `configmap.yaml`, `secrets.yaml` — if Kubernetes was selected
+
+Platform credential sections are derived automatically from each repo's clone URL — a project with both GitHub and Bitbucket repos gets both credential sections.
 
 #### `check` — Verify external tools
 
@@ -480,7 +500,7 @@ Reports are organised under a `YYYY-MM-DD/` subfolder inside `GOOGLE_DRIVE_FOLDE
 
 **Google Cloud setup:**
 1. In [Google Cloud Console](https://console.cloud.google.com), create a service account
-2. Enable the **Google Drive API** and grant the `drive.file` scope
+2. Enable the **Google Drive API** and grant the `drive` scope
 3. Download the service account key as `service-account.json`
 4. Share the target Drive folder with the service account email as **Editor**
 
