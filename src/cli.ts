@@ -2,8 +2,7 @@
 import { loadConfig } from './config.js';
 import { scan, checkExternalTools } from './runner.js';
 import { log, ok, err } from './logger.js';
-import { writeFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { runInit } from './init.js';
 
 // Read version from package.json at runtime (ESM-compatible)
 import { createRequire } from 'node:module';
@@ -15,7 +14,7 @@ Usage: sbom-sentinel <command> [options]
 
 Commands:
   scan         Run the full SBOM generation and vulnerability scan
-  init         Generate a starter sbom-sentinel.config.json in the current directory
+  init [dir]   Scaffold a new project with interactive setup
   check        Verify that required tools (git, cdxgen, trivy) are installed
 
 Options (scan):
@@ -57,28 +56,9 @@ Examples:
   sbom-sentinel scan --dry-run
   sbom-sentinel scan --repo my-backend
   sbom-sentinel init
+  sbom-sentinel init ./my-project
   sbom-sentinel check
 `.trim();
-
-const INIT_CONFIG = {
-  $schema: 'https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json',
-  manufacturer: 'My Company',
-  outputDir: './artifacts',
-  notifications: {
-    onVulnerabilities: true,
-    onErrors: true,
-    slack: { enabled: false },
-    email: { enabled: false },
-  },
-  repos: [
-    {
-      name: 'my-backend',
-      cloneUrl: 'https://github.com/myorg/my-backend.git',
-      branch: 'main',
-      type: 'node',
-    },
-  ],
-};
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
@@ -114,15 +94,7 @@ async function main(): Promise<void> {
   // ── init ───────────────────────────────────────────────────────────────────
 
   if (command === 'init') {
-    const dest = resolve(process.cwd(), 'sbom-sentinel.config.json');
-    if (existsSync(dest)) {
-      err(`Config file already exists: ${dest}`);
-      err('Remove it or specify a different directory.');
-      process.exit(1);
-    }
-    writeFileSync(dest, JSON.stringify(INIT_CONFIG, null, 2) + '\n', 'utf8');
-    ok(`Created: ${dest}`);
-    log('Edit the repos array to add your repositories, then run: sbom-sentinel scan');
+    await runInit(argv);
     return;
   }
 

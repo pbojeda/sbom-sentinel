@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] — 2026-04-17
+
+### Added
+
+- **`sbom-sentinel init [directory]`** — Interactive project scaffolding wizard replaces the old static config dump.
+  - Asks: project name, repositories (loop, add as many as needed), Slack notifications, report storage provider(s), and optionally Kubernetes manifests.
+  - Generates a tailored set of files based on answers:
+    - `sbom-sentinel.config.json` — fully populated config with all repos
+    - `.env.example` — only the credential sections relevant to the project's platforms (GitHub, Bitbucket, or generic), Slack, and storage provider(s)
+    - `.gitignore`
+    - `kubernetes/cronjob.yaml`, `kubernetes/configmap.yaml`, `kubernetes/secrets.yaml` (optional)
+  - Platform credential sections are derived automatically from each repo's clone URL using `detectPlatform()` — no separate "primary platform" question needed. Mixed-host projects (GitHub + Bitbucket) get both credential sections.
+  - `StorageChoice = 'both'` maps to `STORAGE_PROVIDER=ibm-cos,google-drive` in all generated files — the runtime-expected comma-separated format is always used, never the wizard-only `both` value.
+  - Per-repo token keys (`BITBUCKET_TOKEN_<NAME>`, `GITHUB_TOKEN_<NAME>`) are generated using the same `repoTokenEnvKey()` function the runner uses, ensuring consistency.
+  - Accepts an optional target directory: `sbom-sentinel init ./my-project` creates the directory if it doesn't exist.
+
+---
+
 ## [0.5.0] — 2026-04-16
 
 ### Added
