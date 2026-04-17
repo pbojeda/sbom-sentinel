@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.1] — 2026-04-17
+
+### Fixed
+
+- **`init` wizard — HTTPS URL validation** — Clone URLs that are SSH-format (`git@github.com:org/repo.git`) or otherwise unparseable are now rejected immediately in the wizard with a clear message, preventing a hard crash in `buildCloneUrl()` at scan time. The prompt now reads "Clone URL (HTTPS)" for clarity.
+- **`init` wizard — `secrets.yaml` invalid YAML** — `stringData:` followed by only commented-out lines parsed as `null` in YAML, causing `kubectl apply` to fail schema validation. All credential hints are now emitted as a comment block above the manifest and `stringData: {}` is used, producing a structurally valid (and directly applicable) Kubernetes Secret.
+- **`init` wizard — `secrets.yaml` missing platform sections when no repos configured** — When the wizard was run without any repos, `k8sSecrets` only emitted the `GIT_TOKEN` (generic) section, while `.env.example` correctly showed all three platform sections (GitHub, Bitbucket, generic). Both files now use the same `noPlatforms` fallback logic: all platform sections are included when no repos are configured.
+- **`init` wizard — `.gitignore` overwrite** — Running `sbom-sentinel init` in an existing project directory silently replaced the existing `.gitignore` with the minimal sentinel template, potentially exposing `node_modules/` or other local entries. Now: if `.gitignore` already exists, only the missing critical entries (`.env`, `artifacts/`) are appended; the rest of the file is preserved.
+- **`init` wizard — spurious `cd .` step** — When initialising in the current directory (`sbom-sentinel init .`), the "Next steps" output incorrectly showed `1. cd .`. The `cd` step is now only shown when the target directory differs from the working directory.
+- **`init` wizard — `askYesNo` silently coerced unrecognised input** — Typing `sure`, `1`, or a typo at a yes/no prompt returned `false` (like `n`) instead of re-prompting. `askYesNo` now loops on unrecognised input, matching the behaviour of `askChoice`.
+
+---
+
 ## [0.6.0] — 2026-04-17
 
 ### Added

@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline/promises';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, appendFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, join, dirname, basename } from 'node:path';
 import { ok, log, warn, err } from './logger.js';
 import { detectPlatform, repoTokenEnvKey } from './git.js';
@@ -51,9 +51,13 @@ async function ask(rl: RlInterface, prompt: string, def = ''): Promise<string> {
 
 async function askYesNo(rl: RlInterface, prompt: string, def: boolean): Promise<boolean> {
   const hint = def ? 'Y/n' : 'y/N';
-  const answer = (await rl.question(`${prompt} (${hint}): `)).trim().toLowerCase();
-  if (!answer) return def;
-  return answer === 'y' || answer === 'yes';
+  for (;;) {
+    const answer = (await rl.question(`${prompt} (${hint}): `)).trim().toLowerCase();
+    if (!answer) return def;
+    if (answer === 'y' || answer === 'yes') return true;
+    if (answer === 'n' || answer === 'no') return false;
+    log(`  Please answer y or n.`);
+  }
 }
 
 async function askChoice<T extends string>(
@@ -87,8 +91,18 @@ export async function runWizard(rl: RlInterface, dirName: string): Promise<Wizar
     const name = await ask(rl, '  Repo name');
     if (!name) { warn('  Repo name is required — skipping.'); continue; }
 
-    const cloneUrl = await ask(rl, '  Clone URL');
+    const cloneUrl = await ask(rl, '  Clone URL (HTTPS)');
     if (!cloneUrl) { warn('  Clone URL is required — skipping.'); continue; }
+    try {
+      const { protocol } = new URL(cloneUrl);
+      if (protocol !== 'https:' && protocol !== 'http:') {
+        warn('  Only HTTPS clone URLs are supported (e.g. https://github.com/org/repo.git).');
+        continue;
+      }
+    } catch {
+      warn('  Invalid URL — enter a valid HTTPS clone URL.');
+      continue;
+    }
 
     const branch = await ask(rl, '  Branch', 'main');
     const type   = await askChoice(
@@ -268,20 +282,32 @@ export function generateFiles(answers: WizardAnswers, targetDir: string): string
   write('.env.example', envLines.join('\n') + '\n');
 
   // ── .gitignore ──────────────────────────────────────────────────────────────
-  write('.gitignore', [
-    '# Secrets — NEVER commit',
-    '.env',
-    '',
-    '# Scan output',
-    'artifacts/',
-    '',
-    '# OS',
-    '.DS_Store',
-    'Thumbs.db',
-    '',
-    '# Logs',
-    '*.log',
-  ].join('\n') + '\n');
+  const gitignorePath = join(targetDir, '.gitignore');
+  if (existsSync(gitignorePath)) {
+    const existing = readFileSync(gitignorePath, 'utf8');
+    const toAppend = ['.env', 'artifacts/'].filter(
+      e => !existing.split('\n').some(l => l.trim() === e),
+    );
+    if (toAppend.length > 0) {
+      appendFileSync(gitignorePath, '\n# sbom-sentinel\n' + toAppend.join('\n') + '\n');
+      created.push('.gitignore');
+    }
+  } else {
+    write('.gitignore', [
+      '# Secrets — NEVER commit',
+      '.env',
+      '',
+      '# Scan output',
+      'artifacts/',
+      '',
+      '# OS',
+      '.DS_Store',
+      'Thumbs.db',
+      '',
+      '# Logs',
+      '*.log',
+    ].join('\n') + '\n');
+  }
 
   // ── Kubernetes manifests ─────────────────────────────────────────────────────
   if (answers.kubernetes) {
@@ -387,22 +413,105 @@ ${indented}
 }
 
 function k8sSecrets(a: WizardAnswers): string {
-  const platforms = new Set<GitPlatform>(a.repos.map(r => detectPlatform(r.cloneUrl)));
-  const hasGithub    = platforms.has('github');
-  const hasBitbucket = platforms.has('bitbucket');
-  const hasOther     = platforms.has('other') || platforms.size === 0;
+  const platforms    = new Set<GitPlatform>(a.repos.map(r => detectPlatform(r.cloneUrl)));
+  const noPlatforms  = platforms.size === 0;
+  const hasGithub    = platforms.has('github')    || noPlatforms;
+  const hasBitbucket = platforms.has('bitbucket') || noPlatforms;
+  const hasOther     = platforms.has('other')     || noPlatforms;
   const hasCos       = a.storage === 'ibm-cos'      || a.storage === 'both';
   const hasDrive     = a.storage === 'google-drive' || a.storage === 'both';
+  const storageValue = a.storage === 'both' ? 'ibm-cos,google-drive' : a.storage;
 
-  const lines: string[] = [
+  // All credential hints live in the comment block so stringData: {} is always valid YAML.
+  const hints: string[] = [
     '# Secret template — do NOT commit real values.',
     '# Use Sealed Secrets, External Secrets Operator, or your vault solution.',
     '#',
     '# Quick-create from CLI:',
     '#   kubectl create secret generic sbom-sentinel-secrets \\',
     `#     --namespace ${a.k8sNamespace} \\`,
-    '#     --from-literal=BITBUCKET_TOKEN=\'your-token\' \\',
+    '#     --from-literal=KEY=\'value\' ...',
     '#     --dry-run=client -o yaml | kubectl apply -f -',
+    '#',
+    '# Keys to populate in stringData below:',
+    '#',
+  ];
+
+  if (hasGithub) {
+    hints.push(
+      '#   # GitHub credentials',
+      '#   GITHUB_TOKEN: "REPLACE_ME"',
+      '#   GITHUB_USER: "x-token-auth"',
+    );
+    const ghRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'github');
+    if (ghRepos.length > 0) {
+      hints.push('#   # Per-repo GitHub tokens (optional):');
+      for (const r of ghRepos) {
+        hints.push(`#   ${repoTokenEnvKey('github', r.name)}: "REPLACE_ME"`);
+      }
+    }
+    hints.push('#');
+  }
+
+  if (hasBitbucket) {
+    hints.push(
+      '#   # Bitbucket credentials',
+      '#   BITBUCKET_TOKEN: "REPLACE_ME"',
+      '#   BITBUCKET_USER: "your-bitbucket-username"',
+    );
+    const bbRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'bitbucket');
+    if (bbRepos.length > 0) {
+      hints.push('#   # Per-repo Bitbucket tokens (optional):');
+      for (const r of bbRepos) {
+        hints.push(`#   ${repoTokenEnvKey('bitbucket', r.name)}: "REPLACE_ME"`);
+      }
+    }
+    hints.push('#');
+  }
+
+  if (hasOther) {
+    hints.push(
+      '#   # Generic Git credentials (fallback / self-hosted / GitLab)',
+      '#   GIT_TOKEN: "REPLACE_ME"',
+      '#   GIT_USER: "x-token-auth"',
+      '#',
+    );
+  }
+
+  if (a.slack) {
+    hints.push(
+      '#   # Slack webhook',
+      '#   SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T000/B000/xxxx"',
+      '#',
+    );
+  }
+
+  if (hasCos || hasDrive) {
+    hints.push(`#   STORAGE_PROVIDER: "${storageValue}"`);
+  }
+
+  if (hasCos) {
+    hints.push(
+      '#   IBM_COS_ENDPOINT: "https://s3.eu-de.cloud-object-storage.appdomain.cloud"',
+      '#   IBM_COS_BUCKET: "sbom-sentinel-reports"',
+      '#   IBM_COS_ACCESS_KEY_ID: "REPLACE_ME"',
+      '#   IBM_COS_SECRET_ACCESS_KEY: "REPLACE_ME"',
+      '#   IBM_COS_REGION: "eu-de"',
+      '#   IBM_COS_PUBLIC_URL: "https://sbom-sentinel-reports.s3.eu-de.cloud-object-storage.appdomain.cloud"',
+      '#',
+    );
+  }
+
+  if (hasDrive) {
+    hints.push(
+      '#   GOOGLE_DRIVE_CREDENTIALS: "REPLACE_ME"',
+      '#   GOOGLE_DRIVE_FOLDER_ID: "REPLACE_ME"',
+      '#',
+    );
+  }
+
+  return [
+    ...hints,
     '',
     'apiVersion: v1',
     'kind: Secret',
@@ -410,84 +519,9 @@ function k8sSecrets(a: WizardAnswers): string {
     '  name: sbom-sentinel-secrets',
     `  namespace: ${a.k8sNamespace}`,
     'type: Opaque',
-    'stringData:',
-  ];
-
-  if (hasGithub) {
-    lines.push(
-      '  # GitHub credentials',
-      '  # GITHUB_TOKEN: "REPLACE_ME"',
-      '  # GITHUB_USER: "x-token-auth"',
-    );
-    const ghRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'github');
-    if (ghRepos.length > 0) {
-      lines.push('  # Per-repo GitHub tokens (optional):');
-      for (const r of ghRepos) {
-        lines.push(`  # ${repoTokenEnvKey('github', r.name)}: "REPLACE_ME"`);
-      }
-    }
-    lines.push('');
-  }
-
-  if (hasBitbucket) {
-    lines.push(
-      '  # Bitbucket credentials',
-      '  # BITBUCKET_TOKEN: "REPLACE_ME"',
-      '  # BITBUCKET_USER: "your-bitbucket-username"',
-    );
-    const bbRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'bitbucket');
-    if (bbRepos.length > 0) {
-      lines.push('  # Per-repo Bitbucket tokens (optional):');
-      for (const r of bbRepos) {
-        lines.push(`  # ${repoTokenEnvKey('bitbucket', r.name)}: "REPLACE_ME"`);
-      }
-    }
-    lines.push('');
-  }
-
-  if (hasOther) {
-    lines.push(
-      '  # Generic Git credentials (fallback / self-hosted / GitLab)',
-      '  # GIT_TOKEN: "REPLACE_ME"',
-      '  # GIT_USER: "x-token-auth"',
-      '',
-    );
-  }
-
-  if (a.slack) {
-    lines.push(
-      '  # Slack webhook',
-      '  # SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T000/B000/xxxx"',
-      '',
-    );
-  }
-
-  if (hasCos || hasDrive) {
-    const storageValue = a.storage === 'both' ? 'ibm-cos,google-drive' : a.storage;
-    lines.push(`  # STORAGE_PROVIDER: "${storageValue}"`);
-  }
-
-  if (hasCos) {
-    lines.push(
-      '  # IBM_COS_ENDPOINT: "https://s3.eu-de.cloud-object-storage.appdomain.cloud"',
-      '  # IBM_COS_BUCKET: "sbom-sentinel-reports"',
-      '  # IBM_COS_ACCESS_KEY_ID: "REPLACE_ME"',
-      '  # IBM_COS_SECRET_ACCESS_KEY: "REPLACE_ME"',
-      '  # IBM_COS_REGION: "eu-de"',
-      '  # IBM_COS_PUBLIC_URL: "https://sbom-sentinel-reports.s3.eu-de.cloud-object-storage.appdomain.cloud"',
-      '',
-    );
-  }
-
-  if (hasDrive) {
-    lines.push(
-      '  # GOOGLE_DRIVE_CREDENTIALS: "REPLACE_ME"',
-      '  # GOOGLE_DRIVE_FOLDER_ID: "REPLACE_ME"',
-      '',
-    );
-  }
-
-  return lines.join('\n') + '\n';
+    'stringData: {}',
+    '',
+  ].join('\n');
 }
 
 // ── Entry point (called from cli.ts) ─────────────────────────────────────────
@@ -519,11 +553,12 @@ export async function runInit(argv: string[]): Promise<void> {
     ok(`Project scaffolded in: ${targetDir}`);
     for (const f of created) log(`  ${f}`);
     log('');
+    const showCd = argv[1] != null && targetDir !== process.cwd();
     log('Next steps:');
-    if (argv[1]) log(`  1. cd ${argv[1]}`);
-    log(`  ${argv[1] ? 2 : 1}. Copy .env.example → .env and fill in your credentials`);
-    log(`  ${argv[1] ? 3 : 2}. Review sbom-sentinel.config.json — add or remove repos as needed`);
-    log(`  ${argv[1] ? 4 : 3}. Run: sbom-sentinel scan --dry-run`);
+    if (showCd) log(`  1. cd ${argv[1]}`);
+    log(`  ${showCd ? 2 : 1}. Copy .env.example → .env and fill in your credentials`);
+    log(`  ${showCd ? 3 : 2}. Review sbom-sentinel.config.json — add or remove repos as needed`);
+    log(`  ${showCd ? 4 : 3}. Run: sbom-sentinel scan --dry-run`);
   } finally {
     rl.close();
   }

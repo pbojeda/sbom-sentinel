@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runWizard, generateFiles } from '../../src/init.js';
@@ -153,6 +153,48 @@ describe('runWizard', () => {
     const rl = makeRl(['', 'n', 'n', 'invalid', 'ibm-cos', '']);
     const result = await runWizard(rl, 'proj');
     expect(result.storage).toBe('ibm-cos');
+  });
+
+  it('re-prompts on invalid yes/no input until a valid answer is given', async () => {
+    // 'sure' is not y/n — should re-prompt; 'n' answers the question
+    const rl = makeRl(['', 'sure', 'n', 'n', '', '']);
+    const result = await runWizard(rl, 'proj');
+    expect(result.repos).toHaveLength(0);
+  });
+
+  it('rejects SSH clone URL and prompts for a new URL', async () => {
+    const rl = makeRl([
+      '',                                       // project name
+      'y',                                      // add repo
+      'my-svc',                                 // name
+      'git@github.com:org/my-svc.git',          // SSH URL → rejected
+      'y',                                      // add repo (loop restart)
+      'my-svc',                                 // name
+      'https://github.com/org/my-svc.git',      // valid HTTPS
+      '', '',                                   // branch, type defaults
+      'n',                                      // no more repos
+      'n', '', '',                              // slack, storage, kubernetes
+    ]);
+    const result = await runWizard(rl, 'proj');
+    expect(result.repos).toHaveLength(1);
+    expect(result.repos[0]!.cloneUrl).toBe('https://github.com/org/my-svc.git');
+  });
+
+  it('rejects malformed clone URL and prompts for a valid one', async () => {
+    const rl = makeRl([
+      '',
+      'y',
+      'my-svc',
+      'not-a-url',                              // invalid URL → rejected
+      'y',
+      'my-svc',
+      'https://github.com/org/my-svc.git',
+      '', '',
+      'n',
+      'n', '', '',
+    ]);
+    const result = await runWizard(rl, 'proj');
+    expect(result.repos).toHaveLength(1);
   });
 });
 
@@ -402,5 +444,41 @@ describe('generateFiles', () => {
   it('returns only 3 paths when kubernetes=false', () => {
     const created = generateFiles(makeAnswers({ kubernetes: false }), tmpDir);
     expect(created).toHaveLength(3);
+  });
+
+  // ── .gitignore append ────────────────────────────────────────────────────────
+
+  it('appends .env and artifacts/ to an existing .gitignore that lacks them', () => {
+    writeFileSync(join(tmpDir, '.gitignore'), 'node_modules/\ndist/\n');
+    generateFiles(makeAnswers(), tmpDir);
+    const result = readFileSync(join(tmpDir, '.gitignore'), 'utf8');
+    expect(result).toContain('node_modules/');
+    expect(result).toContain('.env');
+    expect(result).toContain('artifacts/');
+  });
+
+  it('does not duplicate entries already present in an existing .gitignore', () => {
+    writeFileSync(join(tmpDir, '.gitignore'), '.env\nartifacts/\n');
+    generateFiles(makeAnswers(), tmpDir);
+    const result = readFileSync(join(tmpDir, '.gitignore'), 'utf8');
+    expect(result.split('\n').filter(l => l.trim() === '.env')).toHaveLength(1);
+    expect(result.split('\n').filter(l => l.trim() === 'artifacts/')).toHaveLength(1);
+  });
+
+  // ── secrets.yaml ─────────────────────────────────────────────────────────────
+
+  it('secrets.yaml has valid YAML with an empty stringData map', () => {
+    generateFiles(makeAnswers({ kubernetes: true }), tmpDir);
+    const sec = readFileSync(join(tmpDir, 'kubernetes', 'secrets.yaml'), 'utf8');
+    expect(sec).toContain('stringData: {}');
+  });
+
+  it('secrets.yaml includes all platform sections when no repos and kubernetes=true', () => {
+    const answers = makeAnswers({ kubernetes: true, repos: [] });
+    generateFiles(answers, tmpDir);
+    const sec = readFileSync(join(tmpDir, 'kubernetes', 'secrets.yaml'), 'utf8');
+    expect(sec).toContain('GITHUB_TOKEN');
+    expect(sec).toContain('BITBUCKET_TOKEN');
+    expect(sec).toContain('GIT_TOKEN');
   });
 });
