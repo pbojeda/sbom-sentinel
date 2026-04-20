@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.3] — 2026-04-20
+
+### Added
+
+- **`init` wizard — Docker and CI file generation** — Two new questions at the end of the wizard:
+  - "Generate Dockerfile and docker-compose.yml?" (default: no) — generates a production-ready `Dockerfile` (node:20-alpine + git, bash, curl, jq, cdxgen@11, Trivy, sbom-sentinel) and a `docker-compose.yml` with per-repo token env vars, SMTP vars, and storage vars activated or commented based on the chosen storage provider.
+  - "Generate CI pipeline?" (choices: none/bitbucket/github-actions; default: auto-detected from repo URLs) — generates `bitbucket-pipelines.yml` (with `sbom-scan` and `sbom-scan-single` custom pipelines, per-repo token hints in the comment header) or `.github/workflows/sbom-sentinel.yml` (with per-repo token env vars, storage vars activated when configured, schedule inherited from the Kubernetes CronJob schedule if Kubernetes manifests were generated).
+
+---
+
 ## [0.6.2] — 2026-04-20
 
 ### Fixed

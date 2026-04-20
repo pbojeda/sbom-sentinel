@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'no
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runWizard, generateFiles } from '../../src/init.js';
-import type { RlInterface, WizardAnswers } from '../../src/init.js';
+import type { RlInterface, WizardAnswers, CiChoice } from '../../src/init.js';
 
 // ── Mock logger ───────────────────────────────────────────────────────────────
 
@@ -37,6 +37,8 @@ function makeAnswers(overrides: Partial<WizardAnswers> = {}): WizardAnswers {
     k8sNamespace: 'security',
     k8sSchedule:  '0 2 * * *',
     k8sImage:     'ghcr.io/pbojeda/sbom-sentinel:latest',
+    docker:       false,
+    ci:           'none',
     ...overrides,
   };
 }
@@ -202,6 +204,76 @@ describe('runWizard', () => {
     ]);
     const result = await runWizard(rl, 'proj');
     expect(result.repos).toHaveLength(1);
+  });
+
+  it('docker defaults to false when answer is empty', async () => {
+    const rl = makeRl(['', 'n', 'n', '', '']);
+    const result = await runWizard(rl, 'proj');
+    expect(result.docker).toBe(false);
+  });
+
+  it('ci defaults to none when no repos are configured', async () => {
+    const rl = makeRl(['', 'n', 'n', '', '']);
+    const result = await runWizard(rl, 'proj');
+    expect(result.ci).toBe('none');
+  });
+
+  it('ci defaults to bitbucket when all repos are on Bitbucket', async () => {
+    const rl = makeRl([
+      '',    // project name
+      'y',   // add repo
+      'svc', 'https://bitbucket.org/org/svc.git', '', '', '',
+      'n',   // no more
+      'n',   // slack
+      '',    // storage → none
+      '',    // kubernetes → N
+      '',    // docker → N
+      '',    // ci → accept default (bitbucket)
+    ]);
+    const result = await runWizard(rl, 'proj');
+    expect(result.ci).toBe('bitbucket');
+  });
+
+  it('ci defaults to github-actions when all repos are on GitHub', async () => {
+    const rl = makeRl([
+      '',    // project name
+      'y',   // add repo
+      'svc', 'https://github.com/org/svc.git', '', '', '',
+      'n',   // no more
+      'n',   // slack
+      '',    // storage → none
+      '',    // kubernetes → N
+      '',    // docker → N
+      '',    // ci → accept default (github-actions)
+    ]);
+    const result = await runWizard(rl, 'proj');
+    expect(result.ci).toBe('github-actions');
+  });
+
+  it('ci defaults to none when repos have mixed platforms', async () => {
+    const rl = makeRl([
+      '',
+      'y', 'gh-svc', 'https://github.com/org/gh-svc.git', '', '', '',
+      'y', 'bb-svc', 'https://bitbucket.org/org/bb-svc.git', '', '', '',
+      'n',
+      'n', '', '',
+      '', '',   // docker, ci → defaults (none for mixed)
+    ]);
+    const result = await runWizard(rl, 'proj');
+    expect(result.ci).toBe('none');
+  });
+
+  it('ci=bitbucket collected correctly when explicitly chosen', async () => {
+    const rl = makeRl(['', 'n', 'n', '', '', '', 'bitbucket']);
+    const result = await runWizard(rl, 'proj');
+    expect(result.ci).toBe('bitbucket' as CiChoice);
+  });
+
+  it('docker=true and ci=github-actions collected correctly', async () => {
+    const rl = makeRl(['', 'n', 'n', '', '', 'y', 'github-actions']);
+    const result = await runWizard(rl, 'proj');
+    expect(result.docker).toBe(true);
+    expect(result.ci).toBe('github-actions' as CiChoice);
   });
 });
 
@@ -531,5 +603,138 @@ describe('generateFiles', () => {
     const sec = readFileSync(join(tmpDir, 'kubernetes', 'secrets.yaml'), 'utf8');
     expect(sec).toContain('GOOGLE_DRIVE_CREDENTIALS');
     expect(sec).toContain('service_account');
+  });
+
+  // ── Docker ───────────────────────────────────────────────────────────────────
+
+  it('does NOT create Dockerfile when docker=false', () => {
+    generateFiles(makeAnswers({ docker: false }), tmpDir);
+    expect(existsSync(join(tmpDir, 'Dockerfile'))).toBe(false);
+    expect(existsSync(join(tmpDir, 'docker-compose.yml'))).toBe(false);
+  });
+
+  it('creates Dockerfile and docker-compose.yml when docker=true', () => {
+    generateFiles(makeAnswers({ docker: true }), tmpDir);
+    expect(existsSync(join(tmpDir, 'Dockerfile'))).toBe(true);
+    expect(existsSync(join(tmpDir, 'docker-compose.yml'))).toBe(true);
+  });
+
+  it('Dockerfile contains node:20-alpine and sbom-sentinel install', () => {
+    generateFiles(makeAnswers({ docker: true }), tmpDir);
+    const df = readFileSync(join(tmpDir, 'Dockerfile'), 'utf8');
+    expect(df).toContain('node:20-alpine');
+    expect(df).toContain('npm install -g sbom-sentinel');
+    expect(df).toContain('@cyclonedx/cdxgen@11');
+  });
+
+  it('docker-compose.yml contains per-repo token for Bitbucket repos', () => {
+    const answers = makeAnswers({
+      docker: true,
+      repos: [{ name: 'my-svc', cloneUrl: 'https://bitbucket.org/org/my-svc.git', branch: 'main', type: 'node' }],
+    });
+    generateFiles(answers, tmpDir);
+    const dc = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+    expect(dc).toContain('BITBUCKET_TOKEN_MY_SVC');
+  });
+
+  it('docker-compose.yml activates storage vars when storage=ibm-cos', () => {
+    const answers = makeAnswers({ docker: true, storage: 'ibm-cos' });
+    generateFiles(answers, tmpDir);
+    const dc = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+    expect(dc).toMatch(/^\s+STORAGE_PROVIDER:/m);
+    expect(dc).toContain('IBM_COS_ENDPOINT:');
+    expect(dc).not.toMatch(/^\s+#\s+IBM_COS_ENDPOINT:/m);
+  });
+
+  it('docker-compose.yml leaves storage vars commented when storage=none', () => {
+    const answers = makeAnswers({ docker: true, storage: 'none' });
+    generateFiles(answers, tmpDir);
+    const dc = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+    expect(dc).not.toMatch(/^\s+STORAGE_PROVIDER:/m);
+  });
+
+  // ── CI ───────────────────────────────────────────────────────────────────────
+
+  it('does NOT create CI file when ci=none', () => {
+    generateFiles(makeAnswers({ ci: 'none' }), tmpDir);
+    expect(existsSync(join(tmpDir, 'bitbucket-pipelines.yml'))).toBe(false);
+    expect(existsSync(join(tmpDir, '.github'))).toBe(false);
+  });
+
+  it('creates bitbucket-pipelines.yml when ci=bitbucket', () => {
+    generateFiles(makeAnswers({ ci: 'bitbucket' }), tmpDir);
+    expect(existsSync(join(tmpDir, 'bitbucket-pipelines.yml'))).toBe(true);
+  });
+
+  it('bitbucket-pipelines.yml lists per-repo token names in comment header', () => {
+    const answers = makeAnswers({
+      ci: 'bitbucket',
+      repos: [
+        { name: 'ic-framework-back', cloneUrl: 'https://bitbucket.org/org/ic-framework-back.git', branch: 'main', type: 'node' },
+      ],
+    });
+    generateFiles(answers, tmpDir);
+    const yml = readFileSync(join(tmpDir, 'bitbucket-pipelines.yml'), 'utf8');
+    expect(yml).toContain('BITBUCKET_TOKEN_IC_FRAMEWORK_BACK');
+    expect(yml).toContain('ic-framework-back');
+  });
+
+  it('creates .github/workflows/sbom-sentinel.yml when ci=github-actions', () => {
+    generateFiles(makeAnswers({ ci: 'github-actions' }), tmpDir);
+    expect(existsSync(join(tmpDir, '.github', 'workflows', 'sbom-sentinel.yml'))).toBe(true);
+  });
+
+  it('github-actions.yml contains per-repo token env vars for Bitbucket repos', () => {
+    const answers = makeAnswers({
+      ci: 'github-actions',
+      repos: [{ name: 'my-api', cloneUrl: 'https://bitbucket.org/org/my-api.git', branch: 'main', type: 'node' }],
+    });
+    generateFiles(answers, tmpDir);
+    const yml = readFileSync(join(tmpDir, '.github', 'workflows', 'sbom-sentinel.yml'), 'utf8');
+    expect(yml).toContain('BITBUCKET_TOKEN_MY_API');
+  });
+
+  it('github-actions.yml uses k8sSchedule when kubernetes=true', () => {
+    const answers = makeAnswers({ ci: 'github-actions', kubernetes: true, k8sSchedule: '0 4 * * 1' });
+    generateFiles(answers, tmpDir);
+    const yml = readFileSync(join(tmpDir, '.github', 'workflows', 'sbom-sentinel.yml'), 'utf8');
+    expect(yml).toContain("'0 4 * * 1'");
+  });
+
+  it('github-actions.yml uses default schedule 0 2 * * * when kubernetes=false', () => {
+    const answers = makeAnswers({ ci: 'github-actions', kubernetes: false });
+    generateFiles(answers, tmpDir);
+    const yml = readFileSync(join(tmpDir, '.github', 'workflows', 'sbom-sentinel.yml'), 'utf8');
+    expect(yml).toContain("'0 2 * * *'");
+  });
+
+  it('github-actions.yml activates IBM COS env vars when storage=ibm-cos', () => {
+    const answers = makeAnswers({ ci: 'github-actions', storage: 'ibm-cos' });
+    generateFiles(answers, tmpDir);
+    const yml = readFileSync(join(tmpDir, '.github', 'workflows', 'sbom-sentinel.yml'), 'utf8');
+    expect(yml).toContain('STORAGE_PROVIDER: ibm-cos');
+    expect(yml).toMatch(/^\s+IBM_COS_ENDPOINT:/m);
+    expect(yml).not.toMatch(/^\s+#\s+IBM_COS_ENDPOINT:/m);
+  });
+
+  it('github-actions.yml activates Google Drive env vars when storage=google-drive', () => {
+    const answers = makeAnswers({ ci: 'github-actions', storage: 'google-drive' });
+    generateFiles(answers, tmpDir);
+    const yml = readFileSync(join(tmpDir, '.github', 'workflows', 'sbom-sentinel.yml'), 'utf8');
+    expect(yml).toContain('STORAGE_PROVIDER: google-drive');
+    expect(yml).toMatch(/^\s+GOOGLE_DRIVE_CREDENTIALS:/m);
+  });
+
+  it('returned paths include Dockerfile and CI file', () => {
+    const answers = makeAnswers({ docker: true, ci: 'bitbucket' });
+    const created = generateFiles(answers, tmpDir);
+    expect(created).toContain('Dockerfile');
+    expect(created).toContain('docker-compose.yml');
+    expect(created).toContain('bitbucket-pipelines.yml');
+  });
+
+  it('returned paths include github-actions workflow path', () => {
+    const created = generateFiles(makeAnswers({ ci: 'github-actions' }), tmpDir);
+    expect(created).toContain('.github/workflows/sbom-sentinel.yml');
   });
 });

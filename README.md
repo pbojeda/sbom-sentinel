@@ -317,18 +317,23 @@ sbom-sentinel init ./my-audit-proj  # create a new directory and scaffold inside
 The wizard asks:
 
 1. **Project name** — used as `manufacturer` in the config
-2. **Repositories** — add as many as needed (name, clone URL, branch, type)
+2. **Repositories** — add as many as needed (name, clone URL, branch, type, private flag)
 3. **Slack notifications** — yes/no
 4. **Report storage** — `none`, `ibm-cos`, `google-drive`, or `both`
-5. **Kubernetes manifests** — yes/no (namespace, schedule, image)
+5. **Kubernetes manifests** — yes/no (namespace, cron schedule, container image)
+6. **Docker files** — yes/no — generates `Dockerfile` and `docker-compose.yml`
+7. **CI pipeline** — `none`, `bitbucket`, or `github-actions` (auto-detected from repo URLs)
 
 Generated files:
 - `sbom-sentinel.config.json` — fully populated with your repos and settings
 - `.env.example` — only the credential vars relevant to your platforms and storage choices
 - `.gitignore` — pre-configured to exclude `.env` and `artifacts/`
 - `kubernetes/cronjob.yaml`, `configmap.yaml`, `secrets.yaml` — if Kubernetes was selected
+- `Dockerfile` + `docker-compose.yml` — if Docker was selected; storage vars activated when a provider is configured
+- `bitbucket-pipelines.yml` — if CI=bitbucket; includes `sbom-scan` and `sbom-scan-single` pipelines, per-repo token hints in the header
+- `.github/workflows/sbom-sentinel.yml` — if CI=github-actions; per-repo token env vars, storage vars activated when configured
 
-Platform credential sections are derived automatically from each repo's clone URL — a project with both GitHub and Bitbucket repos gets both credential sections.
+Platform credential sections are derived automatically from each repo's clone URL — a project with only Bitbucket repos gets only the Bitbucket credential sections; mixed repos get all relevant sections.
 
 #### `check` — Verify external tools
 
@@ -534,10 +539,14 @@ GOOGLE_DRIVE_FOLDER_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs
 
 ### Docker
 
+Run `sbom-sentinel init` and answer **yes** to "Generate Dockerfile and docker-compose.yml?" — the wizard generates both files tailored to your repos and storage choice.
+
+Or use the template directly:
+
 ```dockerfile
 FROM node:20-alpine
 
-RUN apk add --no-cache git bash curl
+RUN apk add --no-cache git bash curl jq
 
 # cdxgen
 RUN npm install -g @cyclonedx/cdxgen@11
@@ -549,18 +558,24 @@ RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/
 # sbom-sentinel
 RUN npm install -g sbom-sentinel
 
+WORKDIR /app
+VOLUME ["/app/artifacts"]
+
 ENTRYPOINT ["sbom-sentinel"]
 CMD ["scan"]
 ```
 
 ```bash
+# Build and run with docker compose (after sbom-sentinel init --docker)
+docker compose build
+docker compose run --rm sbom-sentinel scan
+
+# Or with plain docker
 docker build -t sbom-sentinel .
 docker run --rm \
-  -e GIT_TOKEN="$GIT_TOKEN" \
-  -e SLACK_WEBHOOK_URL="$SLACK_WEBHOOK_URL" \
+  --env-file .env \
   -v "$(pwd)/sbom-sentinel.config.json:/app/sbom-sentinel.config.json:ro" \
   -v "$(pwd)/artifacts:/app/artifacts" \
-  -w /app \
   sbom-sentinel scan
 ```
 
@@ -620,13 +635,17 @@ Secrets (`GIT_TOKEN`, `SLACK_WEBHOOK_URL`, …) should be stored in a Kubernetes
 
 ### GitHub Actions
 
+Run `sbom-sentinel init` and choose **github-actions** for the CI question — the wizard generates `.github/workflows/sbom-sentinel.yml` with per-repo token env vars and storage vars pre-configured. Or use the full example in [`examples/ci/github-actions.yml`](examples/ci/github-actions.yml).
+
+Minimal example:
+
 ```yaml
 # .github/workflows/sbom-scan.yml
 name: SBOM Vulnerability Scan
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # 02:00 UTC daily
+    - cron: '0 2 * * *'
   workflow_dispatch:
 
 jobs:
@@ -641,11 +660,12 @@ jobs:
             | sh -s -- -b /usr/local/bin
 
       - name: Install cdxgen and sbom-sentinel
-        run: npm install -g @cyclonedx/cdxgen sbom-sentinel
+        run: npm install -g @cyclonedx/cdxgen@11 sbom-sentinel
 
       - name: Run scan
         env:
-          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BITBUCKET_TOKEN: ${{ secrets.BITBUCKET_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: sbom-sentinel scan
 
@@ -653,34 +673,35 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sbom-reports
+          name: sbom-reports-${{ github.run_id }}
           path: artifacts/reports/
+          retention-days: 30
 ```
 
 ### Bitbucket Pipelines
 
+Run `sbom-sentinel init` and choose **bitbucket** — the wizard generates `bitbucket-pipelines.yml` with `sbom-scan` (full) and `sbom-scan-single` (single-repo) custom pipelines, and per-repo token hints in the header. Or see the full example at [`examples/ci/bitbucket-pipelines.yml`](examples/ci/bitbucket-pipelines.yml).
+
+Schedule configuration: **Settings → Pipelines → Schedules** → select the `sbom-scan` custom pipeline.
+
 ```yaml
 # bitbucket-pipelines.yml
+image: node:20
+
 pipelines:
   custom:
     sbom-scan:
       - step:
           name: SBOM Vulnerability Scan
-          image: node:20
           script:
             - apt-get update && apt-get install -y curl
-            - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-            - npm install -g @cyclonedx/cdxgen sbom-sentinel
+            - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh
+                | sh -s -- -b /usr/local/bin
+            - npm install -g @cyclonedx/cdxgen@11 sbom-sentinel
+            - sbom-sentinel check
             - sbom-sentinel scan
           artifacts:
             - artifacts/reports/**
-
-  schedules:
-    - cron: '0 2 * * *'
-      branches:
-        include:
-          - main
-      pipeline: custom.sbom-scan
 ```
 
 ---

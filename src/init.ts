@@ -15,6 +15,8 @@ export type RepoType = RepoConfig['type'];
 // generated files — it is NEVER written to disk as-is.
 export type StorageChoice = 'none' | 'ibm-cos' | 'google-drive' | 'both';
 
+export type CiChoice = 'none' | 'bitbucket' | 'github-actions';
+
 export interface InitRepo {
   name: string;
   cloneUrl: string;
@@ -33,6 +35,8 @@ export interface WizardAnswers {
   k8sNamespace: string;
   k8sSchedule: string;
   k8sImage: string;
+  docker: boolean;
+  ci: CiChoice;
 }
 
 // Structural interface for readline injection — lets tests create a plain mock
@@ -135,7 +139,17 @@ export async function runWizard(rl: RlInterface, dirName: string): Promise<Wizar
     k8sImage     = await ask(rl, '  Container image', 'ghcr.io/pbojeda/sbom-sentinel:latest');
   }
 
-  return { projectName, repos, slack, storage, kubernetes, k8sNamespace, k8sSchedule, k8sImage };
+  const docker = await askYesNo(rl, 'Generate Dockerfile and docker-compose.yml?', false);
+
+  const detectedPlatforms = new Set(repos.map(r => detectPlatform(r.cloneUrl)));
+  let ciDefault: CiChoice = 'none';
+  if (detectedPlatforms.size === 1) {
+    if (detectedPlatforms.has('bitbucket')) ciDefault = 'bitbucket';
+    if (detectedPlatforms.has('github'))    ciDefault = 'github-actions';
+  }
+  const ci = await askChoice(rl, 'Generate CI pipeline?', ['none', 'bitbucket', 'github-actions'] as const, ciDefault);
+
+  return { projectName, repos, slack, storage, kubernetes, k8sNamespace, k8sSchedule, k8sImage, docker, ci };
 }
 
 // ── File generation ───────────────────────────────────────────────────────────
@@ -320,7 +334,442 @@ export function generateFiles(answers: WizardAnswers, targetDir: string): string
     write('kubernetes/secrets.yaml',   k8sSecrets(answers));
   }
 
+  // ── Docker ───────────────────────────────────────────────────────────────────
+  if (answers.docker) {
+    write('Dockerfile',         dockerfileContent());
+    write('docker-compose.yml', dockerCompose(answers));
+  }
+
+  // ── CI ───────────────────────────────────────────────────────────────────────
+  if (answers.ci === 'bitbucket') {
+    write('bitbucket-pipelines.yml', ciPipelineBitbucket(answers));
+  }
+  if (answers.ci === 'github-actions') {
+    write('.github/workflows/sbom-sentinel.yml', ciPipelineGithubActions(answers));
+  }
+
   return created;
+}
+
+// ── Docker template generators ───────────────────────────────────────────────
+
+function dockerfileContent(): string {
+  return `FROM node:20-alpine
+
+# System dependencies
+RUN apk add --no-cache \\
+    git \\
+    bash \\
+    curl \\
+    jq
+
+# cdxgen — SBOM generation
+RUN npm install -g @cyclonedx/cdxgen@11
+
+# Trivy — vulnerability scanning
+RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \\
+    | sh -s -- -b /usr/local/bin
+
+# sbom-sentinel
+RUN npm install -g sbom-sentinel
+
+WORKDIR /app
+
+# Default config location — mount your sbom-sentinel.config.json here
+VOLUME ["/app/artifacts"]
+
+ENTRYPOINT ["sbom-sentinel"]
+CMD ["scan"]
+`;
+}
+
+function dockerCompose(a: WizardAnswers): string {
+  const platforms    = new Set<GitPlatform>(a.repos.map(r => detectPlatform(r.cloneUrl)));
+  const noPlatforms  = platforms.size === 0;
+  const hasBitbucket = platforms.has('bitbucket') || noPlatforms;
+  const hasGithub    = platforms.has('github')    || noPlatforms;
+  const hasOther     = platforms.has('other')     || noPlatforms;
+  const hasCos       = a.storage === 'ibm-cos'      || a.storage === 'both';
+  const hasDrive     = a.storage === 'google-drive' || a.storage === 'both';
+  const storageValue = a.storage === 'both' ? 'ibm-cos,google-drive' : a.storage;
+
+  const lines: string[] = [
+    'services:',
+    '  sbom-sentinel:',
+    '    build:',
+    '      context: .',
+    '      dockerfile: Dockerfile',
+    '    image: sbom-sentinel:local',
+    '    command: scan',
+    '    working_dir: /app',
+    '    environment:',
+    '      # Platform-specific tokens (take priority over GIT_TOKEN)',
+  ];
+
+  if (hasGithub) {
+    lines.push(
+      '      GITHUB_TOKEN: \${GITHUB_TOKEN:-}',
+      '      GITHUB_USER: \${GITHUB_USER:-x-token-auth}',
+    );
+    const ghRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'github');
+    for (const r of ghRepos) {
+      const key = repoTokenEnvKey('github', r.name);
+      lines.push(`      ${key}: \${${key}:-}`);
+    }
+  }
+
+  if (hasBitbucket) {
+    lines.push(
+      '      BITBUCKET_TOKEN: \${BITBUCKET_TOKEN:-}',
+      '      BITBUCKET_USER: \${BITBUCKET_USER:-x-token-auth}',
+    );
+    const bbRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'bitbucket');
+    for (const r of bbRepos) {
+      const key = repoTokenEnvKey('bitbucket', r.name);
+      lines.push(`      ${key}: \${${key}:-}`);
+    }
+  }
+
+  if (hasOther) {
+    lines.push(
+      '      # Fallback token for other platforms or mixed setups',
+      '      GIT_TOKEN: \${GIT_TOKEN:-}',
+      '      GIT_USER: \${GIT_USER:-x-token-auth}',
+    );
+    const otherRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'other');
+    for (const r of otherRepos) {
+      const key = repoTokenEnvKey('other', r.name);
+      lines.push(`      ${key}: \${${key}:-}`);
+    }
+  }
+
+  lines.push(
+    '      # Optional — Slack webhook for notifications',
+    '      SLACK_WEBHOOK_URL: \${SLACK_WEBHOOK_URL:-}',
+    '      # Optional — SMTP for email notifications',
+    '      SMTP_HOST: \${SMTP_HOST:-}',
+    '      SMTP_PORT: \${SMTP_PORT:-587}',
+    '      SMTP_USER: \${SMTP_USER:-}',
+    '      SMTP_PASS: \${SMTP_PASS:-}',
+    '      EMAIL_FROM: \${EMAIL_FROM:-}',
+    '      EMAIL_TO: \${EMAIL_TO:-}',
+  );
+
+  if (hasCos || hasDrive) {
+    lines.push(`      STORAGE_PROVIDER: \${STORAGE_PROVIDER:-${storageValue}}`);
+  } else {
+    lines.push('      # Optional — persistent report storage (remove providers you don\'t use)');
+    lines.push('      # STORAGE_PROVIDER: \${STORAGE_PROVIDER:-}   # ibm-cos, google-drive, or ibm-cos,google-drive');
+  }
+
+  if (hasCos) {
+    lines.push(
+      '      IBM_COS_ENDPOINT: \${IBM_COS_ENDPOINT:-}',
+      '      IBM_COS_BUCKET: \${IBM_COS_BUCKET:-}',
+      '      IBM_COS_ACCESS_KEY_ID: \${IBM_COS_ACCESS_KEY_ID:-}',
+      '      IBM_COS_SECRET_ACCESS_KEY: \${IBM_COS_SECRET_ACCESS_KEY:-}',
+      '      IBM_COS_REGION: \${IBM_COS_REGION:-}',
+      '      IBM_COS_PUBLIC_URL: \${IBM_COS_PUBLIC_URL:-}',
+    );
+  } else {
+    lines.push(
+      '      # IBM_COS_ENDPOINT: \${IBM_COS_ENDPOINT:-}',
+      '      # IBM_COS_BUCKET: \${IBM_COS_BUCKET:-}',
+      '      # IBM_COS_ACCESS_KEY_ID: \${IBM_COS_ACCESS_KEY_ID:-}',
+      '      # IBM_COS_SECRET_ACCESS_KEY: \${IBM_COS_SECRET_ACCESS_KEY:-}',
+      '      # IBM_COS_PUBLIC_URL: \${IBM_COS_PUBLIC_URL:-}',
+    );
+  }
+
+  if (hasDrive) {
+    lines.push(
+      '      GOOGLE_DRIVE_CREDENTIALS: \${GOOGLE_DRIVE_CREDENTIALS:-}',
+      '      GOOGLE_DRIVE_FOLDER_ID: \${GOOGLE_DRIVE_FOLDER_ID:-}',
+    );
+  } else {
+    lines.push(
+      '      # GOOGLE_DRIVE_CREDENTIALS: \${GOOGLE_DRIVE_CREDENTIALS:-}',
+      '      # GOOGLE_DRIVE_FOLDER_ID: \${GOOGLE_DRIVE_FOLDER_ID:-}',
+    );
+  }
+
+  lines.push(
+    '      # Output directory (inside container)',
+    '      SENTINEL_OUTPUT_DIR: /app/artifacts',
+    '      LOG_LEVEL: \${LOG_LEVEL:-info}',
+    '    volumes:',
+    '      # Config file (read-only)',
+    '      - ./sbom-sentinel.config.json:/app/sbom-sentinel.config.json:ro',
+    '      # Artifacts output (persisted on host)',
+    '      - ./artifacts:/app/artifacts',
+    '    restart: "no"',
+    '',
+  );
+
+  return lines.join('\n');
+}
+
+// ── CI template generators ────────────────────────────────────────────────────
+
+function ciPipelineBitbucket(a: WizardAnswers): string {
+  const bbRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'bitbucket');
+  const ghRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'github');
+
+  const tokenHints: string[] = [
+    '#   BITBUCKET_TOKEN          — App Password or Repository Access Token for bitbucket.org repos',
+    '#   BITBUCKET_USER           — your Bitbucket username',
+  ];
+
+  if (bbRepos.length > 0) {
+    tokenHints.push('#');
+    tokenHints.push('#   Per-repo Bitbucket tokens (optional — override BITBUCKET_TOKEN for a specific repo):');
+    for (const r of bbRepos) {
+      const key = repoTokenEnvKey('bitbucket', r.name);
+      tokenHints.push(`#   ${key.padEnd(40)} — repo: ${r.name}`);
+    }
+  }
+
+  if (ghRepos.length > 0) {
+    tokenHints.push('#');
+    tokenHints.push('#   GITHUB_TOKEN             — (optional) Personal Access Token for github.com repos');
+  }
+
+  tokenHints.push(
+    '#   GIT_TOKEN                — (optional) fallback token for other platforms',
+    '#   SLACK_WEBHOOK_URL        — (optional) Slack webhook for notifications',
+  );
+
+  return [
+    '# Bitbucket Pipelines — SBOM Sentinel',
+    '#',
+    '# Required repository variables (Settings > Pipelines > Repository variables):',
+    ...tokenHints,
+    '#',
+    '# Optional — persistent report storage:',
+    '#   STORAGE_PROVIDER         — ibm-cos, google-drive, or ibm-cos,google-drive',
+    '#   IBM_COS_ENDPOINT         — IBM COS S3 endpoint URL',
+    '#   IBM_COS_BUCKET           — IBM COS bucket name',
+    '#   IBM_COS_ACCESS_KEY_ID    — IBM COS HMAC access key ID',
+    '#   IBM_COS_SECRET_ACCESS_KEY — IBM COS HMAC secret access key',
+    '#   IBM_COS_PUBLIC_URL       — (optional) virtual-hosted public base URL',
+    '#   GOOGLE_DRIVE_CREDENTIALS — path to service-account.json or inline JSON',
+    '#   GOOGLE_DRIVE_FOLDER_ID   — (optional) Google Drive target folder ID',
+    '#',
+    '# Schedule configuration:',
+    '#   Settings > Pipelines > Schedules → add a schedule for the branch that holds',
+    '#   this file and select the "sbom-scan" custom pipeline.',
+    '',
+    'image: node:20',
+    '',
+    'definitions:',
+    '  steps:',
+    '    - step: &install-tools',
+    '        name: Install tools',
+    '        script:',
+    '          - apt-get update && apt-get install -y curl',
+    '          - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh',
+    '              | sh -s -- -b /usr/local/bin',
+    '          - npm install -g @cyclonedx/cdxgen@11 sbom-sentinel',
+    '          - sbom-sentinel check',
+    '',
+    'pipelines:',
+    '  custom:',
+    '    sbom-scan:',
+    '      - step:',
+    '          name: SBOM Vulnerability Scan',
+    '          caches:',
+    '            - node',
+    '          script:',
+    '            # Install tools',
+    '            - apt-get update && apt-get install -y curl',
+    '            - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh',
+    '                | sh -s -- -b /usr/local/bin',
+    '            - npm install -g @cyclonedx/cdxgen@11 sbom-sentinel',
+    '',
+    '            # Verify tools',
+    '            - sbom-sentinel check',
+    '',
+    '            # Run scan (credentials injected via repository variables)',
+    '            - sbom-sentinel scan',
+    '          artifacts:',
+    '            - artifacts/reports/**',
+    '',
+    '    sbom-scan-single:',
+    '      - variables:',
+    '          - name: REPO_NAME',
+    '      - step:',
+    '          name: Scan single repository',
+    '          script:',
+    '            - apt-get update && apt-get install -y curl',
+    '            - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh',
+    '                | sh -s -- -b /usr/local/bin',
+    '            - npm install -g @cyclonedx/cdxgen@11 sbom-sentinel',
+    '            - sbom-sentinel scan --repo "$REPO_NAME"',
+    '          artifacts:',
+    '            - artifacts/reports/**',
+    '',
+  ].join('\n');
+}
+
+function ciPipelineGithubActions(a: WizardAnswers): string {
+  const schedule   = a.kubernetes ? a.k8sSchedule : '0 2 * * *';
+  const hasCos     = a.storage === 'ibm-cos'      || a.storage === 'both';
+  const hasDrive   = a.storage === 'google-drive' || a.storage === 'both';
+  const storageValue = a.storage === 'both' ? 'ibm-cos,google-drive' : a.storage;
+
+  const platforms    = new Set<GitPlatform>(a.repos.map(r => detectPlatform(r.cloneUrl)));
+  const noPlatforms  = platforms.size === 0;
+  const hasGithub    = platforms.has('github')    || noPlatforms;
+  const hasBitbucket = platforms.has('bitbucket') || noPlatforms;
+
+  const envLines: string[] = [
+    '          # Platform-specific tokens (take priority over GIT_TOKEN)',
+  ];
+
+  if (hasGithub) {
+    envLines.push(`          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`);
+    const ghRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'github');
+    for (const r of ghRepos) {
+      const key = repoTokenEnvKey('github', r.name);
+      envLines.push(`          ${key}: \${{ secrets.${key} }}`);
+    }
+  }
+
+  if (hasBitbucket) {
+    envLines.push(
+      `          BITBUCKET_TOKEN: \${{ secrets.BITBUCKET_TOKEN }}`,
+      `          BITBUCKET_USER: \${{ secrets.BITBUCKET_USER }}`,
+    );
+    const bbRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'bitbucket');
+    for (const r of bbRepos) {
+      const key = repoTokenEnvKey('bitbucket', r.name);
+      envLines.push(`          ${key}: \${{ secrets.${key} }}`);
+    }
+  }
+
+  const otherRepos = a.repos.filter(r => detectPlatform(r.cloneUrl) === 'other');
+  if (otherRepos.length > 0) {
+    envLines.push(`          GIT_TOKEN: \${{ secrets.GIT_TOKEN }}`);
+    for (const r of otherRepos) {
+      const key = repoTokenEnvKey('other', r.name);
+      envLines.push(`          ${key}: \${{ secrets.${key} }}`);
+    }
+  } else {
+    envLines.push(`          # Fallback token for other platforms or mixed setups`);
+    envLines.push(`          GIT_TOKEN: \${{ secrets.GIT_TOKEN }}`);
+  }
+
+  envLines.push(
+    `          SLACK_WEBHOOK_URL: \${{ secrets.SLACK_WEBHOOK_URL }}`,
+    `          SMTP_HOST: \${{ secrets.SMTP_HOST }}`,
+    `          SMTP_PORT: \${{ secrets.SMTP_PORT }}`,
+    `          SMTP_USER: \${{ secrets.SMTP_USER }}`,
+    `          SMTP_PASS: \${{ secrets.SMTP_PASS }}`,
+    `          EMAIL_FROM: \${{ secrets.EMAIL_FROM }}`,
+    `          EMAIL_TO: \${{ secrets.EMAIL_TO }}`,
+  );
+
+  if (hasCos || hasDrive) {
+    envLines.push(`          STORAGE_PROVIDER: ${storageValue}`);
+  } else {
+    envLines.push(
+      '          # Optional — persistent report storage (remove providers you don\'t use)',
+      '          # STORAGE_PROVIDER: ibm-cos,google-drive',
+    );
+  }
+
+  if (hasCos) {
+    envLines.push(
+      `          IBM_COS_ENDPOINT: \${{ secrets.IBM_COS_ENDPOINT }}`,
+      `          IBM_COS_BUCKET: \${{ secrets.IBM_COS_BUCKET }}`,
+      `          IBM_COS_ACCESS_KEY_ID: \${{ secrets.IBM_COS_ACCESS_KEY_ID }}`,
+      `          IBM_COS_SECRET_ACCESS_KEY: \${{ secrets.IBM_COS_SECRET_ACCESS_KEY }}`,
+      `          IBM_COS_REGION: \${{ secrets.IBM_COS_REGION }}`,
+      `          IBM_COS_PUBLIC_URL: \${{ secrets.IBM_COS_PUBLIC_URL }}`,
+    );
+  } else {
+    envLines.push(
+      '          # IBM_COS_ENDPOINT: ${{ secrets.IBM_COS_ENDPOINT }}',
+      '          # IBM_COS_BUCKET: ${{ secrets.IBM_COS_BUCKET }}',
+      '          # IBM_COS_ACCESS_KEY_ID: ${{ secrets.IBM_COS_ACCESS_KEY_ID }}',
+      '          # IBM_COS_SECRET_ACCESS_KEY: ${{ secrets.IBM_COS_SECRET_ACCESS_KEY }}',
+      '          # IBM_COS_PUBLIC_URL: ${{ secrets.IBM_COS_PUBLIC_URL }}',
+    );
+  }
+
+  if (hasDrive) {
+    envLines.push(
+      `          GOOGLE_DRIVE_CREDENTIALS: \${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}`,
+      `          GOOGLE_DRIVE_FOLDER_ID: \${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}`,
+    );
+  } else {
+    envLines.push(
+      '          # GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}',
+      '          # GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}',
+    );
+  }
+
+  return `name: SBOM Vulnerability Scan
+
+on:
+  # Run daily at ${schedule} UTC
+  schedule:
+    - cron: '${schedule}'
+  # Allow manual trigger from the GitHub UI
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Scan only a specific repo (leave empty for all)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \\
+            | sh -s -- -b /usr/local/bin
+
+      - name: Install cdxgen and sbom-sentinel
+        run: npm install -g @cyclonedx/cdxgen@11 sbom-sentinel
+
+      - name: Verify tools
+        run: sbom-sentinel check
+
+      - name: Run scan
+        env:
+${envLines.join('\n')}
+        run: |
+          if [ -n "\${{ github.event.inputs.repo }}" ]; then
+            sbom-sentinel scan --repo "\${{ github.event.inputs.repo }}"
+          else
+            sbom-sentinel scan
+          fi
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-reports-\${{ github.run_id }}
+          path: artifacts/reports/
+          retention-days: 30
+`;
 }
 
 // ── Kubernetes template generators ───────────────────────────────────────────
@@ -547,10 +996,13 @@ export async function runInit(argv: string[]): Promise<void> {
     log('');
     const showCd = argv[1] != null && targetDir !== process.cwd();
     log('Next steps:');
-    if (showCd) log(`  1. cd ${argv[1]}`);
-    log(`  ${showCd ? 2 : 1}. Copy .env.example → .env and fill in your credentials`);
-    log(`  ${showCd ? 3 : 2}. Review sbom-sentinel.config.json — add or remove repos as needed`);
-    log(`  ${showCd ? 4 : 3}. Run: sbom-sentinel scan --dry-run`);
+    let step = 1;
+    if (showCd) log(`  ${step++}. cd ${argv[1]}`);
+    log(`  ${step++}. Copy .env.example → .env and fill in your credentials`);
+    log(`  ${step++}. Review sbom-sentinel.config.json — add or remove repos as needed`);
+    if (answers.docker) log(`  ${step++}. Build the Docker image: docker compose build`);
+    if (answers.ci !== 'none') log(`  ${step++}. Commit the generated CI file and push to trigger your pipeline`);
+    log(`  ${step++}. Run: sbom-sentinel scan --dry-run`);
   } finally {
     rl.close();
   }
