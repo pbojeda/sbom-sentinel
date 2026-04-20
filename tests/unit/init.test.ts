@@ -62,7 +62,7 @@ describe('runWizard', () => {
   });
 
   it('collects one repo with all fields', async () => {
-    // addRepo(y), name, url, branch(enter=main), type(enter=node), addMore(n)
+    // addRepo(y), name, url, branch(enter=main), type(enter=node), private(enter=Y), addMore(n)
     const rl = makeRl([
       '',                                          // project name → default
       'y',                                         // add repo?
@@ -70,6 +70,7 @@ describe('runWizard', () => {
       'https://bitbucket.org/myorg/my-backend.git', // url
       '',                                          // branch → main
       '',                                          // type → node
+      '',                                          // private → Y (default true)
       'n',                                         // add more?
       'n',                                         // slack
       '',                                          // storage → none
@@ -82,6 +83,7 @@ describe('runWizard', () => {
       cloneUrl: 'https://bitbucket.org/myorg/my-backend.git',
       branch:   'main',
       type:     'node',
+      private:  true,
     });
   });
 
@@ -92,10 +94,12 @@ describe('runWizard', () => {
       'svc-a',      // name
       'https://github.com/org/svc-a.git',
       'main', '',   // branch, type
+      '',           // private → true
       'y',          // add second
       'svc-b',
       'https://github.com/org/svc-b.git',
       'develop', 'python',
+      'n',          // private → false
       'n',          // no more
       'n',          // slack
       '',           // storage
@@ -116,6 +120,7 @@ describe('runWizard', () => {
       'valid-svc',
       'https://github.com/org/valid-svc.git',
       '', '',
+      '',     // private → true
       'n',    // no more
       'n', '', '',
     ]);
@@ -172,6 +177,7 @@ describe('runWizard', () => {
       'my-svc',                                 // name
       'https://github.com/org/my-svc.git',      // valid HTTPS
       '', '',                                   // branch, type defaults
+      '',                                       // private → true
       'n',                                      // no more repos
       'n', '', '',                              // slack, storage, kubernetes
     ]);
@@ -190,6 +196,7 @@ describe('runWizard', () => {
       'my-svc',
       'https://github.com/org/my-svc.git',
       '', '',
+      '',                                       // private → true
       'n',
       'n', '', '',
     ]);
@@ -480,5 +487,49 @@ describe('generateFiles', () => {
     expect(sec).toContain('GITHUB_TOKEN');
     expect(sec).toContain('BITBUCKET_TOKEN');
     expect(sec).toContain('GIT_TOKEN');
+  });
+
+  it('writes private: true in config when repo.private is true', () => {
+    const answers = makeAnswers({
+      repos: [{ name: 'svc', cloneUrl: 'https://github.com/org/svc.git', branch: 'main', type: 'node', private: true }],
+    });
+    generateFiles(answers, tmpDir);
+    const cfg = JSON.parse(readFileSync(join(tmpDir, 'sbom-sentinel.config.json'), 'utf8')) as {
+      repos: Array<Record<string, unknown>>;
+    };
+    expect(cfg.repos[0]!['private']).toBe(true);
+  });
+
+  it('omits private field in config when repo.private is false', () => {
+    const answers = makeAnswers({
+      repos: [{ name: 'svc', cloneUrl: 'https://github.com/org/svc.git', branch: 'main', type: 'node', private: false }],
+    });
+    generateFiles(answers, tmpDir);
+    const cfg = JSON.parse(readFileSync(join(tmpDir, 'sbom-sentinel.config.json'), 'utf8')) as {
+      repos: Array<Record<string, unknown>>;
+    };
+    expect(cfg.repos[0]!['private']).toBeUndefined();
+  });
+
+  it('cronjob.yaml uses emptyDir not PVC', () => {
+    generateFiles(makeAnswers({ kubernetes: true }), tmpDir);
+    const cj = readFileSync(join(tmpDir, 'kubernetes', 'cronjob.yaml'), 'utf8');
+    expect(cj).toContain('emptyDir: {}');
+    expect(cj).not.toContain('PersistentVolumeClaim');
+    expect(cj).not.toContain('persistentVolumeClaim');
+  });
+
+  it('cronjob.yaml contains commented imagePullSecrets hint', () => {
+    generateFiles(makeAnswers({ kubernetes: true }), tmpDir);
+    const cj = readFileSync(join(tmpDir, 'kubernetes', 'cronjob.yaml'), 'utf8');
+    expect(cj).toContain('imagePullSecrets');
+  });
+
+  it('secrets.yaml GOOGLE_DRIVE_CREDENTIALS hint shows inline JSON format for Kubernetes', () => {
+    const answers = makeAnswers({ kubernetes: true, storage: 'google-drive' });
+    generateFiles(answers, tmpDir);
+    const sec = readFileSync(join(tmpDir, 'kubernetes', 'secrets.yaml'), 'utf8');
+    expect(sec).toContain('GOOGLE_DRIVE_CREDENTIALS');
+    expect(sec).toContain('service_account');
   });
 });

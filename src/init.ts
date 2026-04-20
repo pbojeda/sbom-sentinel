@@ -20,6 +20,7 @@ export interface InitRepo {
   cloneUrl: string;
   branch: string;
   type: RepoType;
+  private?: boolean;
 }
 
 export interface WizardAnswers {
@@ -104,14 +105,15 @@ export async function runWizard(rl: RlInterface, dirName: string): Promise<Wizar
       continue;
     }
 
-    const branch = await ask(rl, '  Branch', 'main');
-    const type   = await askChoice(
+    const branch    = await ask(rl, '  Branch', 'main');
+    const type      = await askChoice(
       rl,
       '  Project type',
       ['node', 'swift', 'gradle', 'python', 'go', 'rust'] as const,
       'node',
     );
-    repos.push({ name, cloneUrl, branch, type });
+    const isPrivate = await askYesNo(rl, '  Private repository?', true);
+    repos.push({ name, cloneUrl, branch, type, private: isPrivate });
   }
 
   const slack      = await askYesNo(rl, 'Enable Slack notifications?', true);
@@ -164,6 +166,7 @@ export function generateFiles(answers: WizardAnswers, targetDir: string): string
       cloneUrl: r.cloneUrl,
       branch:   r.branch,
       type:     r.type,
+      ...(r.private ? { private: true } : {}),
     })),
   };
   write('sbom-sentinel.config.json', JSON.stringify(config, null, 2) + '\n');
@@ -272,7 +275,8 @@ export function generateFiles(answers: WizardAnswers, targetDir: string): string
   if (hasDrive) {
     envLines.push(
       '# Google Drive (service account — npm install googleapis)',
-      '# GOOGLE_DRIVE_CREDENTIALS=/path/to/service-account.json',
+      '# Local:      GOOGLE_DRIVE_CREDENTIALS=/path/to/service-account.json',
+      '# Kubernetes: GOOGLE_DRIVE_CREDENTIALS={"type":"service_account","client_email":"sa@project.iam.gserviceaccount.com","private_key":"..."}',
       '# GOOGLE_DRIVE_FOLDER_ID=REPLACE_ME',
       '# Tip: for Google Workspace orgs, use a Shared Drive folder ID to avoid quota errors.',
       '',
@@ -344,6 +348,8 @@ spec:
             app: sbom-sentinel
         spec:
           restartPolicy: Never
+          # imagePullSecrets:                   # uncomment if using a private container registry
+          #   - name: registry-pull-secret      # kubectl create secret docker-registry registry-pull-secret --namespace ${a.k8sNamespace} ...
           containers:
             - name: sentinel
               image: ${a.k8sImage}
@@ -376,22 +382,7 @@ spec:
               configMap:
                 name: sbom-sentinel-config
             - name: output
-              persistentVolumeClaim:
-                claimName: sbom-sentinel-output
-
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: sbom-sentinel-output
-  namespace: ${a.k8sNamespace}
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
-  # storageClassName: standard   # uncomment and set your storage class
+              emptyDir: {}              # reports are uploaded to cloud storage; no persistent volume needed
 `;
 }
 
@@ -504,7 +495,8 @@ function k8sSecrets(a: WizardAnswers): string {
 
   if (hasDrive) {
     hints.push(
-      '#   GOOGLE_DRIVE_CREDENTIALS: "REPLACE_ME"',
+      '#   # Inline JSON of your Google service account (no file mount needed in Kubernetes):',
+      `#   GOOGLE_DRIVE_CREDENTIALS: '{"type":"service_account","client_email":"sa@project.iam.gserviceaccount.com","private_key":"..."}'`,
       '#   GOOGLE_DRIVE_FOLDER_ID: "REPLACE_ME"',
       '#',
     );

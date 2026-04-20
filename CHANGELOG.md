@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.2] — 2026-04-20
+
+### Fixed
+
+- **`init` wizard — private repository flag missing** — The wizard never asked whether a repository is private, so `sbom-sentinel.config.json` was generated without `"private": true`. Without this flag, sbom-sentinel skips the fail-fast token validation at startup and only fails when `git clone` runs, producing a less actionable error. The wizard now asks "Private repository? (Y/n)" after the project type (defaults to yes), and only writes `"private": true` to the config when the user confirms.
+- **`init` wizard — `kubernetes/cronjob.yaml` uses PVC when `emptyDir` is sufficient** — The generated CronJob provisioned a `PersistentVolumeClaim` for the artifacts volume. Since reports are uploaded to IBM COS or Google Drive after each scan, there is no reason to keep artifacts across pod restarts. `ReadWriteOnce` PVCs can also block pod rescheduling on IKS when a node is drained. The artifacts volume now uses `emptyDir: {}` in the generated template.
+- **`init` wizard — `kubernetes/cronjob.yaml` missing `imagePullSecrets`** — Container images at `de.icr.io`, `us.icr.io`, ECR, GCR, and other private registries require an image pull secret to be specified in the pod spec. The generated CronJob now includes a commented-out `imagePullSecrets` block with instructions for creating the secret via `kubectl`.
+- **`init` wizard — `GOOGLE_DRIVE_CREDENTIALS` guidance unsuitable for Kubernetes** — The generated `.env.example` and `kubernetes/secrets.yaml` suggested setting `GOOGLE_DRIVE_CREDENTIALS` to a file path. In a Kubernetes pod without a mounted service-account volume, a file path would crash the upload. Both files now document the inline JSON approach (supported by `storage.ts` alongside file paths) as the primary method for Kubernetes, with the file-path approach labeled as local/Docker.
+
+---
+
 ## [0.6.1] — 2026-04-17
 
 ### Fixed

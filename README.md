@@ -506,9 +506,13 @@ Reports are organised under a `YYYY-MM-DD/` subfolder inside `GOOGLE_DRIVE_FOLDE
 
 ```bash
 STORAGE_PROVIDER=google-drive
+
+# Local / Docker: path to a service-account.json file
 GOOGLE_DRIVE_CREDENTIALS=/path/to/service-account.json
-# or inline JSON:
-# GOOGLE_DRIVE_CREDENTIALS={"client_email":"sa@project.iam.gserviceaccount.com","private_key":"..."}
+
+# Kubernetes: inline JSON (no file mount needed — store minified JSON as a Secret value)
+# GOOGLE_DRIVE_CREDENTIALS={"type":"service_account","client_email":"sa@project.iam.gserviceaccount.com","private_key":"..."}
+
 GOOGLE_DRIVE_FOLDER_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs
 ```
 
@@ -580,6 +584,8 @@ spec:
       template:
         spec:
           restartPolicy: Never
+          # imagePullSecrets:                   # uncomment if using a private container registry
+          #   - name: registry-pull-secret
           containers:
             - name: sentinel
               image: ghcr.io/pbojeda/sbom-sentinel:latest
@@ -598,11 +604,19 @@ spec:
               configMap:
                 name: sbom-sentinel-config
             - name: output
-              persistentVolumeClaim:
-                claimName: sbom-sentinel-output
+              emptyDir: {}    # reports are uploaded to cloud storage; no persistent volume needed
 ```
 
 Secrets (`GIT_TOKEN`, `SLACK_WEBHOOK_URL`, …) should be stored in a Kubernetes `Secret` named `sbom-sentinel-secrets`.
+
+> **Private container registries (ICR, ECR, GCR):** If your image is in a private registry, create an image pull secret and uncomment `imagePullSecrets` above. Example for IBM Container Registry:
+> ```bash
+> kubectl create secret docker-registry registry-pull-secret \
+>   --namespace <your-namespace> \
+>   --docker-server=de.icr.io \
+>   --docker-username=iamapikey \
+>   --docker-password=<IBM_API_KEY>
+> ```
 
 ### GitHub Actions
 
