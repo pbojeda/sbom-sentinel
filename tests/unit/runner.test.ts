@@ -23,11 +23,12 @@ vi.mock('../../src/git.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../../src/sbom.js',    () => ({ generateSbom:   vi.fn() }));
-vi.mock('../../src/scanner.js', () => ({ scanSbom:       vi.fn() }));
-vi.mock('../../src/report.js',   () => ({ buildSummary:   vi.fn(() => ({})), generateReports: vi.fn(() => ({})) }));
-vi.mock('../../src/notify.js',   () => ({ notify: vi.fn(), notifyTokenExpiry: vi.fn() }));
-vi.mock('../../src/storage.js',  () => ({ uploadReports: vi.fn() }));
+vi.mock('../../src/sbom.js',       () => ({ generateSbom:       vi.fn() }));
+vi.mock('../../src/scanner.js',    () => ({ scanSbom:           vi.fn() }));
+vi.mock('../../src/report.js',     () => ({ buildSummary: vi.fn(() => ({})), generateReports: vi.fn(() => ({})) }));
+vi.mock('../../src/notify.js',     () => ({ notify: vi.fn(), notifyTokenExpiry: vi.fn() }));
+vi.mock('../../src/storage.js',    () => ({ uploadReports: vi.fn(), uploadFile: vi.fn() }));
+vi.mock('../../src/sbom-export.js', () => ({ generateSbomExport: vi.fn(() => '/tmp/sbom-export-2026_04_21.csv') }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -141,12 +142,14 @@ describe('resolveCredentials', () => {
 
 describe('scan — storage upload loop', () => {
   beforeEach(async () => {
-    const { cloneRepo }      = await import('../../src/git.js');
-    const { scanSbom }       = await import('../../src/scanner.js');
-    const { buildSummary, generateReports } = await import('../../src/report.js');
+    const { cloneRepo }                      = await import('../../src/git.js');
+    const { generateSbom }                   = await import('../../src/sbom.js');
+    const { scanSbom }                       = await import('../../src/scanner.js');
+    const { buildSummary, generateReports }  = await import('../../src/report.js');
 
     vi.mocked(cloneRepo).mockReturnValue({ commitSha: 'abc1234', localPath: '/tmp/repo' });
-    vi.mocked(scanSbom).mockReturnValue({ findings: [], errors: [] });
+    vi.mocked(generateSbom).mockReturnValue({ sbomFile: '/tmp/sbom.json', componentCount: 5 });
+    vi.mocked(scanSbom).mockReturnValue({ trivyFile: '/tmp/trivy.json', findings: [], counts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 } } as never);
     vi.mocked(buildSummary).mockReturnValue({ date: '2026-04-16', generatedAt: '', totals: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 }, hasCriticalOrHigh: false, hasErrors: false, reposWithIssues: [], reposWithErrors: [], repositories: [] } as never);
     vi.mocked(generateReports).mockReturnValue({ json: '/tmp/r.json', html: '/tmp/r.html', txt: '/tmp/r.txt' });
   });
@@ -266,5 +269,80 @@ describe('checkTokenExpiry', () => {
     const warnings = checkTokenExpiry(expiry, now);
     expect(warnings).toHaveLength(2);
     expect(warnings.map((w) => w.tokenName).sort()).toEqual(['TOKEN_A', 'TOKEN_B']);
+  });
+});
+
+// ── scan — sbom export ────────────────────────────────────────────────────────
+
+describe('scan — sbom export', () => {
+  beforeEach(async () => {
+    const { cloneRepo }                      = await import('../../src/git.js');
+    const { generateSbom }                   = await import('../../src/sbom.js');
+    const { scanSbom }                       = await import('../../src/scanner.js');
+    const { buildSummary, generateReports }  = await import('../../src/report.js');
+    const { generateSbomExport }             = await import('../../src/sbom-export.js');
+
+    vi.mocked(cloneRepo).mockReturnValue({ commitSha: 'abc1234', localPath: '/tmp/repo' });
+    vi.mocked(generateSbom).mockReturnValue({ sbomFile: '/tmp/sbom.json', componentCount: 5 });
+    vi.mocked(scanSbom).mockReturnValue({ trivyFile: '/tmp/trivy.json', findings: [], counts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 } } as never);
+    vi.mocked(buildSummary).mockReturnValue({ date: '2026-04-21', generatedAt: '', totals: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 }, hasCriticalOrHigh: false, hasErrors: false, reposWithIssues: [], reposWithErrors: [], repositories: [] } as never);
+    vi.mocked(generateReports).mockReturnValue({ json: '/tmp/r.json', html: '/tmp/r.html', txt: '/tmp/r.txt' });
+    vi.mocked(generateSbomExport).mockReturnValue('/tmp/sbom-export-2026_04_21.csv');
+  });
+
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it('calls generateSbomExport with the sbomFiles collected in Phase 1', async () => {
+    const { generateSbomExport } = await import('../../src/sbom-export.js');
+
+    const config = makeConfig({ config: { repos: [makeRepo()] } });
+    await scan(config);
+
+    expect(vi.mocked(generateSbomExport)).toHaveBeenCalledWith(
+      [{ repo: 'my-backend', sbomFile: '/tmp/sbom.json' }],
+      expect.any(String),
+      'sbom-export',
+      expect.any(Date),
+    );
+  });
+
+  it('calls uploadFile once per configured storageConfig', async () => {
+    const { uploadFile } = await import('../../src/storage.js');
+
+    const config = makeConfig({
+      config: { repos: [makeRepo()] },
+      storageConfigs: [{ provider: 'ibm-cos' }, { provider: 'google-drive' }],
+    });
+    await scan(config);
+
+    expect(vi.mocked(uploadFile)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(uploadFile)).toHaveBeenCalledWith(
+      '/tmp/sbom-export-2026_04_21.csv',
+      'sbom-export-2026_04_21.csv',
+      expect.any(Object),
+      expect.any(Date),
+    );
+  });
+
+  it('skips generateSbomExport when sbomExport.enabled is false', async () => {
+    const { generateSbomExport } = await import('../../src/sbom-export.js');
+
+    const config = makeConfig({
+      config: { repos: [makeRepo()], sbomExport: { enabled: false } },
+    });
+    await scan(config);
+
+    expect(vi.mocked(generateSbomExport)).not.toHaveBeenCalled();
+  });
+
+  it('continues to Phase 2 (vulnerability scan) even when generateSbomExport throws', async () => {
+    const { generateSbomExport } = await import('../../src/sbom-export.js');
+    const { scanSbom }           = await import('../../src/scanner.js');
+    vi.mocked(generateSbomExport).mockImplementationOnce(() => { throw new Error('disk full'); });
+
+    const config = makeConfig({ config: { repos: [makeRepo()] } });
+    await scan(config);
+
+    expect(vi.mocked(scanSbom)).toHaveBeenCalled();
   });
 });

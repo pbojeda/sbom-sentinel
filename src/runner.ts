@@ -1,5 +1,5 @@
 import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { log, ok, warn, err, dim, run } from './logger.js';
 import { cloneRepo, cleanupRepo, detectPlatform, repoTokenEnvKey } from './git.js';
@@ -9,7 +9,8 @@ import { buildSummary, generateReports } from './report.js';
 import type { ReportFiles } from './report.js';
 import { notify, notifyTokenExpiry } from './notify.js';
 import type { NotifyConfig } from './notify.js';
-import { uploadReports } from './storage.js';
+import { uploadReports, uploadFile } from './storage.js';
+import { generateSbomExport } from './sbom-export.js';
 import type { LoadedConfig } from './config.js';
 import type { RepoConfig, RepoResult, GlobalSummary, TokenExpiryWarning } from './types.js';
 
@@ -86,51 +87,40 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
   const { repos } = config.config;
   log(`Starting scan for ${repos.length} repository/repositories…`);
 
-  const results: RepoResult[] = [];
+  // ── 3. Phase 1: clone + generate SBOMs ────────────────────────────────────
 
-  // ── 3. Per-repo pipeline ───────────────────────────────────────────────────
+  interface SbomPhaseResult {
+    repo: RepoConfig;
+    commitSha: string;
+    sbomFile: string | null;
+    error: boolean;
+    errorMessage?: string;
+  }
+
+  const sbomPhase: SbomPhaseResult[] = [];
 
   for (const repo of repos) {
-    log(`\n── ${repo.name} (${repo.branch}) ──`);
+    log(`\n── ${repo.name} (${repo.branch}) — generating SBOM ──`);
 
-    const result: RepoResult = {
-      repo: repo.name,
-      branch: repo.branch,
-      commitSha: '',
-      sbomFile: null,
-      trivyFile: null,
-      findings: [],
-      error: false,
-    };
+    // Pre-computed so finally can always clean up, even if cloneRepo throws
+    const localPath = join(workDir, repo.name);
+    let commitSha = '';
 
     try {
-      // Clone
       const { token, user } = resolveCredentials(repo, config);
-      const { commitSha, localPath } = cloneRepo(repo, workDir, token, user);
-      result.commitSha = commitSha;
+      ({ commitSha } = cloneRepo(repo, workDir, token, user));
 
-      // Generate SBOM
       const { sbomFile, componentCount } = generateSbom(repo, localPath, config.outputDir, commitSha, now);
-      result.sbomFile = sbomFile;
       dim(`  SBOM: ${componentCount} components`);
 
-      // Scan with Trivy
-      const { trivyFile, findings, counts } = scanSbom(sbomFile, config.outputDir, repo.name, repo.branch, commitSha, now);
-      result.trivyFile = trivyFile;
-      result.findings = findings;
-
-      const summary = formatCounts(counts);
-      ok(`${repo.name}: ${findings.length} findings${summary ? ` (${summary})` : ''}`);
+      sbomPhase.push({ repo, commitSha, sbomFile, error: false });
     } catch (e) {
-      result.error = true;
-      result.errorMessage = e instanceof Error ? e.message : String(e);
-      err(`${repo.name} failed: ${result.errorMessage}`);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      err(`${repo.name} failed: ${errorMessage}`);
+      sbomPhase.push({ repo, commitSha, sbomFile: null, error: true, errorMessage });
     } finally {
-      // Always delete the clone — it can be several GB
-      cleanupRepo(join(workDir, repo.name));
+      cleanupRepo(localPath);
     }
-
-    results.push(result);
   }
 
   // ── 4. Cleanup work dir ────────────────────────────────────────────────────
@@ -141,15 +131,87 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
     warn(`Could not remove work directory: ${workDir}`);
   }
 
-  // ── 5. Consolidate ─────────────────────────────────────────────────────────
+  // ── 4b. SBOM export (optional, non-fatal) ─────────────────────────────────
+
+  if (config.config.sbomExport?.enabled !== false) {
+    try {
+      const prefix = config.config.sbomExport?.filePrefix ?? 'sbom-export';
+      const csvPath = generateSbomExport(
+        sbomPhase.map((r) => ({ repo: r.repo.name, sbomFile: r.sbomFile })),
+        config.outputDir,
+        prefix,
+        now,
+      );
+      ok(`SBOM export written: ${basename(csvPath)}`);
+      for (const storageConf of config.storageConfigs) {
+        await uploadFile(csvPath, basename(csvPath), storageConf, now);
+      }
+    } catch (e) {
+      warn(`SBOM export failed (vulnerability scan will continue): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // ── 5. Phase 2: scan SBOMs with Trivy ─────────────────────────────────────
+
+  const results: RepoResult[] = [];
+
+  for (const phase of sbomPhase) {
+    if (phase.error || !phase.sbomFile) {
+      results.push({
+        repo: phase.repo.name,
+        branch: phase.repo.branch,
+        commitSha: phase.commitSha,
+        sbomFile: null,
+        trivyFile: null,
+        findings: [],
+        error: true,
+        errorMessage: phase.errorMessage,
+      });
+      continue;
+    }
+
+    log(`\n── ${phase.repo.name} (${phase.repo.branch}) — scanning ──`);
+
+    try {
+      const { trivyFile, findings, counts } = scanSbom(
+        phase.sbomFile, config.outputDir, phase.repo.name, phase.repo.branch, phase.commitSha, now,
+      );
+      const summary = formatCounts(counts);
+      ok(`${phase.repo.name}: ${findings.length} findings${summary ? ` (${summary})` : ''}`);
+      results.push({
+        repo: phase.repo.name,
+        branch: phase.repo.branch,
+        commitSha: phase.commitSha,
+        sbomFile: phase.sbomFile,
+        trivyFile,
+        findings,
+        error: false,
+      });
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      err(`${phase.repo.name} failed: ${errorMessage}`);
+      results.push({
+        repo: phase.repo.name,
+        branch: phase.repo.branch,
+        commitSha: phase.commitSha,
+        sbomFile: phase.sbomFile,
+        trivyFile: null,
+        findings: [],
+        error: true,
+        errorMessage,
+      });
+    }
+  }
+
+  // ── 6. Consolidate ─────────────────────────────────────────────────────────
 
   const globalSummary = buildSummary(results, now);
 
-  // ── 6. Reports ─────────────────────────────────────────────────────────────
+  // ── 7. Reports ─────────────────────────────────────────────────────────────
 
   const reports = generateReports(globalSummary, config.outputDir);
 
-  // ── 6b. Upload to storage (optional) ───────────────────────────────────────
+  // ── 7b. Upload to storage (optional) ──────────────────────────────────────
 
   let reportUrl: string | undefined;
   for (const storageConf of config.storageConfigs) {
@@ -157,11 +219,11 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
     if (url && !reportUrl) reportUrl = url;
   }
 
-  // ── 7. Notify ──────────────────────────────────────────────────────────────
+  // ── 8. Notify ──────────────────────────────────────────────────────────────
 
   await notify(globalSummary, { ...notifyConfig, reportUrl });
 
-  // ── 8. Exit code ───────────────────────────────────────────────────────────
+  // ── 9. Exit code ───────────────────────────────────────────────────────────
   // Priority: 2 (errors) > 1 (vulns) > 0 (ok)
 
   const exitCode: 0 | 1 | 2 = globalSummary.hasErrors
@@ -262,6 +324,18 @@ function executeDryRun(config: LoadedConfig): RunResult {
   log(`Slack webhook        : ${config.slackWebhookUrl ? 'configured' : 'not set'}`);
   log(`Email recipients     : ${config.emailTo.length > 0 ? config.emailTo.join(', ') : 'not set'}`);
   log(`Storage provider     : ${config.storageConfigs.length > 0 ? config.storageConfigs.map((c) => c.provider).join(', ') : 'not set'}`);
+
+  const sbomExportEnabled = config.config.sbomExport?.enabled !== false;
+  if (sbomExportEnabled) {
+    const prefix = config.config.sbomExport?.filePrefix ?? 'sbom-export';
+    const now = new Date();
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(now.getUTCDate()).padStart(2, '0');
+    log(`SBOM export          : ${prefix}-${yyyy}_${mm}_${dd}.csv  (prefix: ${prefix})`);
+  } else {
+    log(`SBOM export          : disabled`);
+  }
 
   const tokenExpiry = config.config.tokenExpiry ?? {};
   if (Object.keys(tokenExpiry).length > 0) {

@@ -75,6 +75,24 @@
         { "BITBUCKET_TOKEN": "2027-04-15", "GITHUB_TOKEN": "2027-06-01" }
       ]
     },
+    "sbomExport": {
+      "type": "object",
+      "description": "SBOM component export settings. Generates a CSV with all scanned components for traceability.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Generate the SBOM components CSV after each scan. Defaults to true.",
+          "default": true
+        },
+        "filePrefix": {
+          "type": "string",
+          "description": "Prefix for the CSV filename. Result: {prefix}-YYYY_MM_DD.csv. Only alphanumeric, hyphen, underscore, and dot characters allowed.",
+          "default": "sbom-export",
+          "pattern": "^[a-zA-Z0-9._-]+$"
+        }
+      }
+    },
     "repos": {
       "type": "array",
       "description": "List of repositories to scan.",

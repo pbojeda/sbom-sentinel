@@ -1,10 +1,16 @@
 // Configuration
+export interface SbomExportConfig {
+  enabled?: boolean;    // default: true
+  filePrefix?: string;  // default: 'sbom-export'
+}
+
 export interface SentinelConfig {
   manufacturer?: string;
   outputDir?: string;
   notifications?: NotificationConfig;
   repos: RepoConfig[];
   tokenExpiry?: Record<string, string>;
+  sbomExport?: SbomExportConfig;
 }
 
 export interface NotificationConfig {

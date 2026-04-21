@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { uploadReports } from '../../src/storage.js';
+import { uploadReports, uploadFile } from '../../src/storage.js';
 import type { StorageConfig } from '../../src/storage.js';
 import type { ReportFiles } from '../../src/report.js';
 
@@ -488,6 +488,7 @@ describe('uploadReports — google-drive', () => {
     });
   });
 
+
   it('still returns the HTML URL when permissions.create fails (org policy rejection)', async () => {
     mockFilesCreate
       .mockResolvedValueOnce({ data: { id: 'folder-2024-04-14' } })
@@ -507,5 +508,113 @@ describe('uploadReports — google-drive', () => {
 
     expect(url).toBe('https://drive.google.com/file/d/file123/view');
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('org policy'));
+  });
+});
+
+// ── uploadFile ────────────────────────────────────────────────────────────────
+
+describe('uploadFile — ibm-cos', () => {
+  const mockSend = vi.fn().mockResolvedValue({});
+  const MockS3Client = vi.fn().mockImplementation(() => ({ send: mockSend }));
+  const MockPutObjectCommand = vi.fn().mockImplementation((input) => input);
+
+  beforeEach(() => {
+    vi.resetModules();
+    mockSend.mockResolvedValue({});
+    MockS3Client.mockClear();
+    MockPutObjectCommand.mockClear();
+    vi.mocked(warn).mockClear();
+  });
+
+  it('uploads with key reports/{filename} and ContentType text/csv', async () => {
+    vi.doMock('@aws-sdk/client-s3', () => ({
+      S3Client: MockS3Client,
+      PutObjectCommand: MockPutObjectCommand,
+    }));
+
+    const { uploadFile: upload } = await import('../../src/storage.js');
+    const config: StorageConfig = {
+      provider: 'ibm-cos',
+      endpoint: 'https://s3.eu-de.cloud-object-storage.appdomain.cloud',
+      bucket: 'my-bucket',
+      accessKeyId: 'key',
+      secretAccessKey: 'secret',
+    };
+
+    await upload('/tmp/sbom-export-2026_04_21.csv', 'sbom-export-2026_04_21.csv', config, new Date('2026-04-21'));
+
+    expect(MockPutObjectCommand).toHaveBeenCalledTimes(1);
+    expect(MockPutObjectCommand.mock.calls[0][0]).toMatchObject({
+      Key: 'reports/sbom-export-2026_04_21.csv',
+      ContentType: 'text/csv',
+    });
+  });
+
+  it('is non-fatal: returns undefined and warns when upload throws', async () => {
+    mockSend.mockRejectedValueOnce(new Error('Connection refused'));
+    vi.doMock('@aws-sdk/client-s3', () => ({
+      S3Client: MockS3Client,
+      PutObjectCommand: MockPutObjectCommand,
+    }));
+
+    const { uploadFile: upload } = await import('../../src/storage.js');
+    const config: StorageConfig = {
+      provider: 'ibm-cos',
+      endpoint: 'https://s3.eu-de.cloud-object-storage.appdomain.cloud',
+      bucket: 'my-bucket',
+      accessKeyId: 'key',
+      secretAccessKey: 'secret',
+    };
+
+    const result = await upload('/tmp/sbom.csv', 'sbom.csv', config, new Date());
+    expect(result).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Connection refused'));
+  });
+});
+
+describe('uploadFile — google-drive', () => {
+  const mockFilesCreate = vi.fn();
+  const mockFilesList   = vi.fn();
+  const MockGoogleAuth  = vi.fn().mockImplementation(() => ({}));
+
+  const mockDrive = {
+    files:       { create: mockFilesCreate, list: mockFilesList },
+    permissions: { create: vi.fn().mockResolvedValue({}) },
+  };
+
+  const mockGoogle = {
+    auth:  { GoogleAuth: MockGoogleAuth },
+    drive: vi.fn().mockReturnValue(mockDrive),
+  };
+
+  beforeEach(() => {
+    vi.resetModules();
+    mockFilesCreate.mockReset();
+    mockFilesList.mockReset();
+    mockFilesList.mockResolvedValue({ data: { files: [] } });
+    vi.mocked(warn).mockClear();
+  });
+
+  it('uploads to the date folder derived from the now parameter', async () => {
+    mockFilesCreate
+      .mockResolvedValueOnce({ data: { id: 'folder-2026-04-21' } })
+      .mockResolvedValueOnce({ data: { id: 'file-csv' } });
+
+    vi.doMock('googleapis', () => ({ google: mockGoogle }));
+
+    const { uploadFile: upload } = await import('../../src/storage.js');
+    const config: StorageConfig = {
+      provider: 'google-drive',
+      credentials: '{"client_email":"sa@project.iam.gserviceaccount.com","private_key":"key"}',
+      folderId: 'folder123',
+    };
+
+    const now = new Date('2026-04-21T10:00:00Z');
+    await upload('/tmp/SBOM_01_Insulclock_360-2026_04_21.csv', 'SBOM_01_Insulclock_360-2026_04_21.csv', config, now);
+
+    // Date folder should be searched/created with the date from `now`, not parsed from the filename
+    expect(mockFilesList).toHaveBeenCalledWith(expect.objectContaining({
+      q: expect.stringContaining('2026-04-21'),
+    }));
   });
 });

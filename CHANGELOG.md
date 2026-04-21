@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.4] — 2026-04-21
+
+### Added
+
+- **SBOM component export CSV** — After all SBOMs are generated (and before vulnerability scanning), sbom-sentinel now writes a consolidated CSV to `{outputDir}/reports/{prefix}-YYYY_MM_DD.csv` containing every component from every scanned repository. Configurable via the new `sbomExport` key in `sbom-sentinel.config.json`:
+  - `enabled` (default: `true`) — set to `false` to skip the export.
+  - `filePrefix` (default: `"sbom-export"`) — prefix for the CSV filename. Only `[a-zA-Z0-9._-]` characters allowed (path-traversal safe).
+  - The CSV is uploaded to all configured storage providers (IBM COS and/or Google Drive) alongside the HTML/JSON reports.
+  - Columns: `repo, name, version, type, purl, licenses, group`. Licenses are joined with ` | ` when multiple licenses are present. Empty fields are empty strings (never `null` or `"N/A"`).
+  - Non-fatal: if the export fails for any reason, vulnerability scanning continues and a warning is logged.
+- **Two-phase runner** — `runner.ts` now runs in two explicit phases: (1) clone + SBOM generation for all repos, (2) SBOM export CSV, (3) vulnerability scanning. Temporary work directory is cleaned up after Phase 1, before scanning. This ensures SBOMs are persisted to `outputDir` before any Trivy scan and that export failures cannot block scans.
+- **`SBOM export` line in `--dry-run` output** — shows the computed filename and prefix, or `disabled` when `sbomExport.enabled: false`.
+
+---
+
 ## [0.6.3] — 2026-04-20
 
 ### Added

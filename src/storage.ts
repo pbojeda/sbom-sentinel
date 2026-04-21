@@ -44,6 +44,128 @@ export async function uploadReports(
   return undefined;
 }
 
+// ── Single-file upload ────────────────────────────────────────────────────────
+
+/**
+ * Uploads a single file to the configured storage provider.
+ * Non-fatal: errors are caught and logged; returns undefined on failure.
+ * @param now  Used by Google Drive to derive the date subfolder (YYYY-MM-DD).
+ *             The filename alone cannot be used because sbomExport filenames
+ *             use underscores (YYYY_MM_DD) which the existing date regex won't match.
+ */
+export async function uploadFile(
+  filePath: string,
+  remoteFilename: string,
+  config: StorageConfig,
+  now: Date,
+): Promise<string | undefined> {
+  try {
+    if (config.provider === 'ibm-cos')     return await uploadSingleFileToIbmCos(filePath, remoteFilename, config);
+    if (config.provider === 'google-drive') return await uploadSingleFileToGoogleDrive(filePath, remoteFilename, config, now);
+  } catch (e) {
+    warn(`Storage upload failed for ${remoteFilename}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return undefined;
+}
+
+async function uploadSingleFileToIbmCos(
+  filePath: string,
+  remoteFilename: string,
+  config: StorageConfig,
+): Promise<string | undefined> {
+  let S3Client: CosClientCtor;
+  let PutObjectCommand: PutCommandCtor;
+
+  try {
+    const mod = await import('@aws-sdk/client-s3') as {
+      S3Client: CosClientCtor;
+      PutObjectCommand: PutCommandCtor;
+    };
+    S3Client = mod.S3Client;
+    PutObjectCommand = mod.PutObjectCommand;
+  } catch {
+    warn('IBM COS storage requires @aws-sdk/client-s3. Install it with: npm install @aws-sdk/client-s3');
+    return undefined;
+  }
+
+  const client = new S3Client({
+    endpoint: config.endpoint,
+    region: config.region ?? 'us-south',
+    credentials: {
+      accessKeyId: config.accessKeyId!,
+      secretAccessKey: config.secretAccessKey!,
+    },
+    forcePathStyle: true,
+  });
+
+  const key = `reports/${remoteFilename}`;
+
+  await client.send(new PutObjectCommand({
+    Bucket: config.bucket,
+    Key: key,
+    Body: createReadStream(filePath),
+    ContentType: 'text/csv',
+  }));
+  dim(`  COS: uploaded ${remoteFilename}`);
+
+  const base = (config.publicBaseUrl || config.endpoint || '').replace(/\/$/, '');
+  return config.publicBaseUrl
+    ? `${base}/${key}`
+    : `${base}/${config.bucket}/${key}`;
+}
+
+async function uploadSingleFileToGoogleDrive(
+  filePath: string,
+  remoteFilename: string,
+  config: StorageConfig,
+  now: Date,
+): Promise<string | undefined> {
+  let google: GoogleModule;
+
+  try {
+    const mod = await import('googleapis') as { google: GoogleModule };
+    google = mod.google;
+  } catch {
+    warn('Google Drive storage requires googleapis. Install it with: npm install googleapis');
+    return undefined;
+  }
+
+  const credStr = config.credentials ?? '';
+  const authOpts = credStr.trimStart().startsWith('{')
+    ? { credentials: JSON.parse(credStr) as Record<string, unknown> }
+    : { keyFile: credStr };
+
+  const auth = new google.auth.GoogleAuth({
+    ...authOpts,
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+
+  const drive = google.drive({ version: 'v3', auth });
+
+  const parentId = config.folderId ?? 'root';
+  const date = now.toISOString().slice(0, 10);
+
+  const uploadFolderId = await getOrCreateDateFolder(drive, parentId, date);
+  if (!uploadFolderId) {
+    err('Google Drive: could not create or find date subfolder.');
+    return undefined;
+  }
+
+  await drive.files.create({
+    requestBody: {
+      name: remoteFilename,
+      mimeType: 'text/csv',
+      parents: [uploadFolderId],
+    },
+    media: { mimeType: 'text/csv', body: createReadStream(filePath) },
+    fields: 'id',
+    supportsAllDrives: true,
+  });
+  dim(`  Drive: uploaded ${remoteFilename} → ${date}/`);
+
+  return undefined;
+}
+
 // ── IBM COS ───────────────────────────────────────────────────────────────────
 
 // Minimal type stubs for the optional @aws-sdk/client-s3 dependency
