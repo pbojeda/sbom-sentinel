@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, copyFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { run, log, ok, warn } from './logger.js';
 import type { RepoConfig } from './types.js';
 
@@ -70,6 +70,13 @@ export function generateSbom(
   const filename = buildArtifactName(repo.name, repo.branch, commitSha, 'bom.cdx.json', now);
   const sbomFile = join(artifactDir, filename);
 
+  const preExisting = findPreExistingSbom(localPath);
+  if (preExisting) {
+    log(`Using pre-existing SBOM: ${relative(localPath, preExisting)} (cdxgen skipped)`);
+    copyFileSync(preExisting, sbomFile);
+    return validateSbom(sbomFile, repo.name);
+  }
+
   log(`Generating SBOM for "${repo.name}" (mode: ${repo.mode ?? 'cdxgen'})…`);
 
   if (repo.mode === 'command') {
@@ -79,6 +86,22 @@ export function generateSbom(
   }
 
   return validateSbom(sbomFile, repo.name);
+}
+
+// ── Pre-existing SBOM detection ───────────────────────────────────────────────
+
+/**
+ * Returns the path to a pre-existing SBOM in `{localPath}/sbom/sbom-*.json`,
+ * or `null` if none is found. When multiple files match, returns the first
+ * alphabetically (lowest version / oldest date prefix sorts first).
+ */
+export function findPreExistingSbom(localPath: string): string | null {
+  const sbomDir = join(localPath, 'sbom');
+  if (!existsSync(sbomDir)) return null;
+  const matches = readdirSync(sbomDir)
+    .filter(f => /^sbom-.+\.json$/.test(f))
+    .sort();
+  return matches.length > 0 ? join(sbomDir, matches[0]) : null;
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────

@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.5] — 2026-04-22
+
+### Added
+
+- **Pre-existing SBOM detection** — Before generating an SBOM with cdxgen, sbom-sentinel now checks whether the cloned repository contains a `sbom/sbom-*.json` file. If found, that file is used directly and cdxgen is skipped. A message is logged: `Using pre-existing SBOM: sbom/sbom-v1.2.json (cdxgen skipped)`. The pre-existing file still goes through `validateSbom()` (must have a `components` array). When multiple files match, the first alphabetically is used. No configuration required — detection is automatic.
+
+---
+
 ## [0.6.4] — 2026-04-21
 
 ### Added

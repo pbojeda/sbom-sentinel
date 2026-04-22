@@ -22,6 +22,8 @@ Designed to run as a scheduled task (Kubernetes CronJob, cron, CI/CD pipeline) a
 - Supports **private repositories** on GitHub and Bitbucket with per-platform token validation at startup
 - Warns 15 days before a configured token expires and sends a notification via all enabled channels
 - Supports custom SBOM generation commands per repository (`mode: "command"`)
+- Detects pre-existing SBOMs in the repository (`sbom/sbom-*.json`) and uses them directly instead of re-generating with cdxgen
+- Exports a consolidated CSV of all scanned components across every repository (`sbomExport` config key)
 - Uploads HTML and JSON reports to **IBM Cloud Object Storage** or **Google Drive** and includes a direct link in notifications
 - Zero npm runtime dependencies — native Node 20 fetch, no axios, no dotenv
 - Supports `node`, `swift`, `gradle`, `python`, `go`, `rust` ecosystems via cdxgen
@@ -158,6 +160,22 @@ Run `sbom-sentinel init` to scaffold the full project interactively, or create `
 | `private` | No | Set to `true` if the repo requires authentication. sbom-sentinel validates that the appropriate token is set before starting the scan |
 | `notes` | No | Free-text notes, ignored by the tool |
 
+### Pre-existing SBOM detection
+
+If the cloned repository contains a `sbom/sbom-*.json` file, sbom-sentinel uses it directly and skips cdxgen. This is useful for repositories that maintain and commit their own SBOM.
+
+**Behaviour:**
+- Checked automatically before cdxgen runs — no configuration required
+- The file is copied to the artifact directory under the standard naming pattern
+- It still goes through `validateSbom()`: must be valid CycloneDX JSON with a `components` array
+- If multiple files match (`sbom-v1.0.json`, `sbom-v1.5.json`, …), the first alphabetically is used
+- If the `sbom/` directory does not exist or contains no matching files, cdxgen runs as normal
+
+A message is logged when a pre-existing SBOM is found:
+```
+Using pre-existing SBOM: sbom/sbom-v1.2.json (cdxgen skipped)
+```
+
 ### Private repositories
 
 Mark private repos with `"private": true`. sbom-sentinel validates that the appropriate token is set at startup — before any clone is attempted.
@@ -231,6 +249,28 @@ Tokens expire. Configure expiry dates so sbom-sentinel notifies you before they 
 - Invalid date strings are silently skipped
 
 The `--dry-run` command shows the status of all configured token expiry dates without executing any scans.
+
+### SBOM component export
+
+After all SBOMs are generated (and before vulnerability scanning), sbom-sentinel can write a consolidated CSV listing every component from every repository. Useful for traceability audits in regulated environments.
+
+```json
+{
+  "sbomExport": {
+    "enabled": true,
+    "filePrefix": "sbom-export"
+  }
+}
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Set to `false` to skip the export entirely |
+| `filePrefix` | `"sbom-export"` | Prefix for the CSV filename. Only `[a-zA-Z0-9._-]` characters allowed. Result: `{prefix}-YYYY_MM_DD.csv` |
+
+The CSV is written to `{outputDir}/reports/` and uploaded to all configured storage providers alongside the HTML and JSON reports. Generation is non-fatal — if it fails for any reason, vulnerability scanning continues and a warning is logged.
+
+**CSV columns:** `repo, name, version, type, purl, licenses, group`. Multiple licenses are joined with ` | `.
 
 ### Environment variables
 
