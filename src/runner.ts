@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { log, ok, warn, err, dim, run } from './logger.js';
@@ -73,24 +73,29 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
     }
   }
 
-  // ── 1. Tool check ──────────────────────────────────────────────────────────
+  // ── 1. Setup ───────────────────────────────────────────────────────────────
 
-  checkExternalTools();
+  const { repos } = config.config;
 
-  // ── 2. Setup ───────────────────────────────────────────────────────────────
+  // ── 2. Tool check ──────────────────────────────────────────────────────────
+
+  const allSbomRepo = repos.every((r) => r.mode === 'sbom-repository');
+  checkExternalTools({ skipCdxgen: allSbomRepo, skipGit: allSbomRepo });
+
+  // ── 3. Work directory ──────────────────────────────────────────────────────
 
   const now = new Date();
   const workDir = join(tmpdir(), `sbom-sentinel-${now.getTime()}`);
   mkdirSync(workDir, { recursive: true });
   dim(`Work directory: ${workDir}`);
 
-  const { repos } = config.config;
   log(`Starting scan for ${repos.length} repository/repositories…`);
 
-  // ── 3. Phase 1: clone + generate SBOMs ────────────────────────────────────
+  // ── 4. Phase 1: clone + generate SBOMs ────────────────────────────────────
 
   interface SbomPhaseResult {
-    repo: RepoConfig;
+    repoName: string;
+    branch: string;
     commitSha: string;
     sbomFile: string | null;
     error: boolean;
@@ -100,6 +105,13 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
   const sbomPhase: SbomPhaseResult[] = [];
 
   for (const repo of repos) {
+    if (repo.mode === 'sbom-repository') {
+      log(`\n── ${repo.name} — sbom-repository mode ──`);
+      const expanded = processSbomRepository(repo);
+      sbomPhase.push(...expanded);
+      continue;
+    }
+
     log(`\n── ${repo.name} (${repo.branch}) — generating SBOM ──`);
 
     // Pre-computed so finally can always clean up, even if cloneRepo throws
@@ -113,11 +125,11 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
       const { sbomFile, componentCount } = generateSbom(repo, localPath, config.outputDir, commitSha, now);
       dim(`  SBOM: ${componentCount} components`);
 
-      sbomPhase.push({ repo, commitSha, sbomFile, error: false });
+      sbomPhase.push({ repoName: repo.name, branch: repo.branch, commitSha, sbomFile, error: false });
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       err(`${repo.name} failed: ${errorMessage}`);
-      sbomPhase.push({ repo, commitSha, sbomFile: null, error: true, errorMessage });
+      sbomPhase.push({ repoName: repo.name, branch: repo.branch, commitSha, sbomFile: null, error: true, errorMessage });
     } finally {
       cleanupRepo(localPath);
     }
@@ -137,7 +149,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
     try {
       const prefix = config.config.sbomExport?.filePrefix ?? 'sbom-export';
       const csvPath = generateSbomExport(
-        sbomPhase.map((r) => ({ repo: r.repo.name, sbomFile: r.sbomFile })),
+        sbomPhase.map((r) => ({ repo: r.repoName, sbomFile: r.sbomFile })),
         config.outputDir,
         prefix,
         now,
@@ -158,8 +170,8 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
   for (const phase of sbomPhase) {
     if (phase.error || !phase.sbomFile) {
       results.push({
-        repo: phase.repo.name,
-        branch: phase.repo.branch,
+        repo: phase.repoName,
+        branch: phase.branch,
         commitSha: phase.commitSha,
         sbomFile: null,
         trivyFile: null,
@@ -170,17 +182,17 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
       continue;
     }
 
-    log(`\n── ${phase.repo.name} (${phase.repo.branch}) — scanning ──`);
+    log(`\n── ${phase.repoName} (${phase.branch}) — scanning ──`);
 
     try {
       const { trivyFile, findings, counts } = scanSbom(
-        phase.sbomFile, config.outputDir, phase.repo.name, phase.repo.branch, phase.commitSha, now,
+        phase.sbomFile, config.outputDir, phase.repoName, phase.branch, phase.commitSha, now,
       );
       const summary = formatCounts(counts);
-      ok(`${phase.repo.name}: ${findings.length} findings${summary ? ` (${summary})` : ''}`);
+      ok(`${phase.repoName}: ${findings.length} findings${summary ? ` (${summary})` : ''}`);
       results.push({
-        repo: phase.repo.name,
-        branch: phase.repo.branch,
+        repo: phase.repoName,
+        branch: phase.branch,
         commitSha: phase.commitSha,
         sbomFile: phase.sbomFile,
         trivyFile,
@@ -189,10 +201,10 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
       });
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e);
-      err(`${phase.repo.name} failed: ${errorMessage}`);
+      err(`${phase.repoName} failed: ${errorMessage}`);
       results.push({
-        repo: phase.repo.name,
-        branch: phase.repo.branch,
+        repo: phase.repoName,
+        branch: phase.branch,
         commitSha: phase.commitSha,
         sbomFile: phase.sbomFile,
         trivyFile: null,
@@ -244,24 +256,17 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
  * Throws with clear install instructions if any are missing.
  *
  * Also exported so the CLI `check` command can call it directly.
+ * `skipCdxgen` and `skipGit` can be set to true when all repos use
+ * `mode: "sbom-repository"` (no cloning or SBOM generation needed).
  */
-export function checkExternalTools(): void {
+export function checkExternalTools(
+  options: { skipCdxgen?: boolean; skipGit?: boolean } = {},
+): void {
+  const { skipCdxgen = false, skipGit = false } = options;
   const tools = [
-    {
-      name: 'git',
-      cmd: 'git --version',
-      hint: 'https://git-scm.com/downloads',
-    },
-    {
-      name: 'cdxgen',
-      cmd: 'cdxgen --version',
-      hint: 'npm install -g @cyclonedx/cdxgen',
-    },
-    {
-      name: 'trivy',
-      cmd: 'trivy --version',
-      hint: 'https://trivy.dev/latest/getting-started/installation/',
-    },
+    ...(!skipGit ? [{ name: 'git', cmd: 'git --version', hint: 'https://git-scm.com/downloads' }] : []),
+    ...(!skipCdxgen ? [{ name: 'cdxgen', cmd: 'cdxgen --version', hint: 'npm install -g @cyclonedx/cdxgen' }] : []),
+    { name: 'trivy', cmd: 'trivy --version', hint: 'https://trivy.dev/latest/getting-started/installation/' },
   ];
 
   const missing: string[] = [];
@@ -389,6 +394,86 @@ export function resolveCredentials(
 
   if (perRepoToken) return { token: perRepoToken, user: config.gitUser };
   return { token: config.gitToken, user: config.gitUser };
+}
+
+// ── sbom-repository mode ──────────────────────────────────────────────────────
+
+/**
+ * Finds the most recent `sbom-DD-MM-YYYY` folder inside `repositoryPath`.
+ * Returns null if no matching folder exists.
+ * Exported for testing.
+ */
+export function findSbomRepositoryFolder(
+  repositoryPath: string,
+): { folderPath: string; folderDate: string } | null {
+  const entries = readdirSync(repositoryPath).filter((d) => /^sbom-\d{2}-\d{2}-\d{4}$/.test(d));
+  if (entries.length === 0) return null;
+
+  entries.sort((a, b) => {
+    const toMs = (d: string) => {
+      const [dd, mm, yyyy] = d.slice(5).split('-').map(Number) as [number, number, number];
+      return new Date(yyyy, mm - 1, dd).getTime();
+    };
+    return toMs(a) - toMs(b);
+  });
+
+  const latest = entries[entries.length - 1]!;
+  return { folderPath: join(repositoryPath, latest), folderDate: latest };
+}
+
+interface SbomRepoPhaseResult {
+  repoName: string;
+  branch: string;
+  commitSha: string;
+  sbomFile: string | null;
+  error: boolean;
+  errorMessage?: string;
+}
+
+function processSbomRepository(repo: RepoConfig): SbomRepoPhaseResult[] {
+  const repositoryPath = repo.path;
+  if (!repositoryPath) {
+    return [{ repoName: repo.name, branch: '', commitSha: '', sbomFile: null, error: true,
+      errorMessage: 'sbom-repository mode requires "path" to be set to the local directory' }];
+  }
+
+  let folderInfo: ReturnType<typeof findSbomRepositoryFolder>;
+  try {
+    folderInfo = findSbomRepositoryFolder(repositoryPath);
+  } catch (e) {
+    return [{ repoName: repo.name, branch: '', commitSha: '', sbomFile: null, error: true,
+      errorMessage: `Could not read directory "${repositoryPath}": ${e instanceof Error ? e.message : String(e)}` }];
+  }
+
+  if (!folderInfo) {
+    return [{ repoName: repo.name, branch: '', commitSha: '', sbomFile: null, error: true,
+      errorMessage: `No sbom-DD-MM-YYYY folder found in "${repositoryPath}"` }];
+  }
+
+  const { folderPath, folderDate } = folderInfo;
+
+  let jsonFiles: string[];
+  try {
+    jsonFiles = readdirSync(folderPath).filter((f) => f.endsWith('.json')).sort();
+  } catch (e) {
+    return [{ repoName: repo.name, branch: folderDate, commitSha: folderDate, sbomFile: null, error: true,
+      errorMessage: `Could not read folder "${folderPath}": ${e instanceof Error ? e.message : String(e)}` }];
+  }
+
+  if (jsonFiles.length === 0) {
+    return [{ repoName: repo.name, branch: folderDate, commitSha: folderDate, sbomFile: null, error: true,
+      errorMessage: `No .json SBOM files found in "${folderPath}"` }];
+  }
+
+  log(`  Detected ${folderDate} — ${jsonFiles.length} SBOM(s)`);
+
+  return jsonFiles.map((f) => ({
+    repoName: basename(f, '.json'),
+    branch: folderDate,
+    commitSha: folderDate,
+    sbomFile: join(folderPath, f),
+    error: false,
+  }));
 }
 
 function formatCounts(counts: { CRITICAL: number; HIGH: number; MEDIUM: number; LOW: number }): string {

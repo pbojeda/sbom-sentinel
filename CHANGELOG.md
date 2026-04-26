@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] — 2026-04-24
+
+### Added
+
+- **`mode: "sbom-repository"` — sbom-repository detection mode** — A new repo mode that reads pre-generated SBOMs from a local SBOM repository directory (e.g. a clone of `i360-sbom-repository`) instead of cloning and generating SBOMs with cdxgen. When a repo is configured with `mode: "sbom-repository"`, sbom-sentinel:
+  1. Scans the local directory specified in `"path"` for the most recent `sbom-DD-MM-YYYY` folder.
+  2. Runs Trivy against each `*.json` file found in that folder.
+  3. Produces one `RepoResult` entry per microservice SBOM, with `branch` and `commitSha` set to the detected folder date (e.g. `sbom-23-04-2026`).
+  4. Reports and notifications work identically to normal mode.
+
+  Example config entry:
+  ```json
+  {
+    "name": "i360-sbom-repository",
+    "cloneUrl": "",
+    "branch": "master",
+    "type": "node",
+    "mode": "sbom-repository",
+    "path": "/path/to/local/i360-sbom-repository"
+  }
+  ```
+
+  When all repos use `mode: "sbom-repository"`, the `git` and `cdxgen` tool checks are skipped automatically (only `trivy` is required).
+
+- **`findSbomRepositoryFolder()` exported** — New exported helper that finds the most recent `sbom-DD-MM-YYYY` folder in a given directory.
+
+- **`checkExternalTools()` — optional `skipCdxgen` / `skipGit` parameters** — Both default to `false`. Set automatically when all repos use sbom-repository mode to avoid errors in environments that only have Trivy installed.
+
+---
+
 ## [0.6.5] — 2026-04-22
 
 ### Added

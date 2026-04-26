@@ -125,14 +125,23 @@ function validate(raw: unknown): SentinelConfig {
     if (typeof r['name'] !== 'string' || !r['name'].trim()) {
       throw new Error(`repos[${i}] is missing required field: "name".`);
     }
-    if (typeof r['cloneUrl'] !== 'string' || !r['cloneUrl'].trim()) {
-      throw new Error(`repos[${i}] ("${r['name']}") is missing required field: "cloneUrl".`);
-    }
-    if (typeof r['branch'] !== 'string' || !r['branch'].trim()) {
-      throw new Error(`repos[${i}] ("${r['name']}") is missing required field: "branch".`);
-    }
-    if (typeof r['type'] !== 'string' || !r['type'].trim()) {
-      throw new Error(`repos[${i}] ("${r['name']}") is missing required field: "type".`);
+    const mode = typeof r['mode'] === 'string' ? r['mode'] : 'cdxgen';
+    if (mode === 'sbom-repository') {
+      if (typeof r['path'] !== 'string' || !r['path'].trim()) {
+        throw new Error(
+          `repos[${i}] ("${r['name']}") with mode "sbom-repository" is missing required field: "path" (local directory path).`,
+        );
+      }
+    } else {
+      if (typeof r['cloneUrl'] !== 'string' || !r['cloneUrl'].trim()) {
+        throw new Error(`repos[${i}] ("${r['name']}") is missing required field: "cloneUrl".`);
+      }
+      if (typeof r['branch'] !== 'string' || !r['branch'].trim()) {
+        throw new Error(`repos[${i}] ("${r['name']}") is missing required field: "branch".`);
+      }
+      if (typeof r['type'] !== 'string' || !r['type'].trim()) {
+        throw new Error(`repos[${i}] ("${r['name']}") is missing required field: "type".`);
+      }
     }
   }
 
@@ -277,6 +286,7 @@ export function loadConfig(
   // Step 10 — Validate credentials for private repositories (fail fast before any clone)
   for (const repo of config.repos) {
     if (!repo.private) continue;
+    if (repo.mode === 'sbom-repository') continue;
     const platform = detectPlatform(repo.cloneUrl);
     const perRepoToken = process.env[repoTokenEnvKey(platform, repo.name)] ?? '';
     const resolved =

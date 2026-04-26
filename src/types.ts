@@ -25,7 +25,7 @@ export interface RepoConfig {
   cloneUrl: string;
   branch: string;
   type: 'node' | 'swift' | 'gradle' | 'python' | 'go' | 'rust';
-  mode?: 'cdxgen' | 'command';
+  mode?: 'cdxgen' | 'command' | 'sbom-repository';
   path?: string;
   sbomCommand?: string;
   sbomOutput?: string;

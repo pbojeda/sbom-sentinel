@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { checkTokenExpiry, resolveCredentials, scan } from '../../src/runner.js';
+import { checkTokenExpiry, resolveCredentials, scan, findSbomRepositoryFolder } from '../../src/runner.js';
 import type { LoadedConfig } from '../../src/config.js';
 import type { RepoConfig } from '../../src/types.js';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
+
+// node:fs is partially mocked so readdirSync can be controlled in tests.
+// mkdirSync, rmSync, etc. remain real to avoid breaking the work-directory setup.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, readdirSync: vi.fn(actual.readdirSync) };
+});
 
 vi.mock('../../src/logger.js', () => ({
   ok:   vi.fn(),
@@ -344,5 +351,109 @@ describe('scan — sbom export', () => {
     await scan(config);
 
     expect(vi.mocked(scanSbom)).toHaveBeenCalled();
+  });
+});
+
+// ── findSbomRepositoryFolder ──────────────────────────────────────────────────
+
+describe('findSbomRepositoryFolder', () => {
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it('returns null when no sbom-DD-MM-YYYY folder exists', async () => {
+    const { readdirSync } = await import('node:fs');
+    vi.mocked(readdirSync).mockReturnValueOnce(['README.md', 'scripts'] as never);
+    expect(findSbomRepositoryFolder('/some/path')).toBeNull();
+  });
+
+  it('returns the most recent folder when multiple exist', async () => {
+    const { readdirSync } = await import('node:fs');
+    vi.mocked(readdirSync).mockReturnValueOnce(
+      ['sbom-01-04-2026', 'sbom-23-04-2026', 'sbom-15-04-2026'] as never,
+    );
+    const result = findSbomRepositoryFolder('/repo');
+    expect(result).not.toBeNull();
+    expect(result!.folderDate).toBe('sbom-23-04-2026');
+    expect(result!.folderPath).toContain('sbom-23-04-2026');
+  });
+
+  it('returns the only folder when exactly one exists', async () => {
+    const { readdirSync } = await import('node:fs');
+    vi.mocked(readdirSync).mockReturnValueOnce(['sbom-23-04-2026'] as never);
+    const result = findSbomRepositoryFolder('/repo');
+    expect(result!.folderDate).toBe('sbom-23-04-2026');
+  });
+
+  it('ignores folders that do not match the sbom-DD-MM-YYYY pattern', async () => {
+    const { readdirSync } = await import('node:fs');
+    vi.mocked(readdirSync).mockReturnValueOnce(
+      ['sbom-23-04-2026', 'sbom-today', 'random-folder', 'scripts'] as never,
+    );
+    const result = findSbomRepositoryFolder('/repo');
+    expect(result!.folderDate).toBe('sbom-23-04-2026');
+  });
+});
+
+// ── scan — sbom-repository mode ───────────────────────────────────────────────
+
+describe('scan — sbom-repository mode', () => {
+  beforeEach(async () => {
+    const { buildSummary, generateReports } = await import('../../src/report.js');
+    vi.mocked(buildSummary).mockReturnValue({
+      date: '2026-04-23', generatedAt: '', totals: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
+      hasCriticalOrHigh: false, hasErrors: false, reposWithIssues: [], reposWithErrors: [], repositories: [],
+    } as never);
+    vi.mocked(generateReports).mockReturnValue({ json: '/tmp/r.json', html: '/tmp/r.html', txt: '/tmp/r.txt' });
+  });
+
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it('skips clone and generateSbom — calls scanSbom once per .json file in the detected folder', async () => {
+    const { readdirSync } = await import('node:fs');
+    vi.mocked(readdirSync)
+      .mockReturnValueOnce(['sbom-23-04-2026'] as never)
+      .mockReturnValueOnce(['i02-communications.json', 'i03_integrationapi.json'] as never);
+
+    const { cloneRepo }    = await import('../../src/git.js');
+    const { generateSbom } = await import('../../src/sbom.js');
+    const { scanSbom }     = await import('../../src/scanner.js');
+    vi.mocked(scanSbom).mockReturnValue({
+      trivyFile: '/tmp/trivy.json', findings: [],
+      counts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
+    } as never);
+
+    const repo: RepoConfig = {
+      name: 'i360-sbom-repository', cloneUrl: '', branch: 'master',
+      type: 'node', mode: 'sbom-repository', path: '/local/repo',
+    };
+    const config = makeConfig({ config: { repos: [repo] } });
+
+    await scan(config);
+
+    expect(vi.mocked(cloneRepo)).not.toHaveBeenCalled();
+    expect(vi.mocked(generateSbom)).not.toHaveBeenCalled();
+    expect(vi.mocked(scanSbom)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(scanSbom)).toHaveBeenCalledWith(
+      expect.stringContaining('i02-communications.json'),
+      expect.any(String), 'i02-communications', 'sbom-23-04-2026', 'sbom-23-04-2026', expect.any(Date),
+    );
+  });
+
+  it('records an error result when no sbom-DD-MM-YYYY folder is found', async () => {
+    const { readdirSync } = await import('node:fs');
+    vi.mocked(readdirSync).mockReturnValueOnce(['README.md'] as never);
+
+    const { buildSummary } = await import('../../src/report.js');
+    const repo: RepoConfig = {
+      name: 'i360-sbom-repository', cloneUrl: '', branch: 'master',
+      type: 'node', mode: 'sbom-repository', path: '/local/repo',
+    };
+    const config = makeConfig({ config: { repos: [repo] } });
+
+    await scan(config);
+
+    const call = vi.mocked(buildSummary).mock.calls[0]!;
+    const results = call[0];
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ repo: 'i360-sbom-repository', error: true });
   });
 });
