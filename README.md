@@ -22,10 +22,11 @@ Designed to run as a scheduled task (Kubernetes CronJob, cron, CI/CD pipeline) a
 - Supports **private repositories** on GitHub and Bitbucket with per-platform token validation at startup
 - Warns 15 days before a configured token expires and sends a notification via all enabled channels
 - Supports custom SBOM generation commands per repository (`mode: "command"`)
+- Reads pre-generated SBOMs from a centralised SBOM repository without cloning or running cdxgen (`mode: "sbom-repository"`)
 - Detects pre-existing SBOMs in the repository (`sbom/sbom-*.json`) and uses them directly instead of re-generating with cdxgen
 - Exports a consolidated CSV of all scanned components across every repository (`sbomExport` config key)
 - Uploads HTML and JSON reports to **IBM Cloud Object Storage** or **Google Drive** and includes a direct link in notifications
-- Zero npm runtime dependencies — native Node 20 fetch, no axios, no dotenv
+- Zero **required** npm runtime dependencies — native Node 20 fetch, no axios, no dotenv
 - Supports `node`, `swift`, `gradle`, `python`, `go`, `rust` ecosystems via cdxgen
 
 ---
@@ -150,15 +151,76 @@ Run `sbom-sentinel init` to scaffold the full project interactively, or create `
 | Field | Required | Description |
 |---|---|---|
 | `name` | Yes | Unique identifier used in reports and artifact filenames |
-| `cloneUrl` | Yes | HTTPS clone URL |
-| `branch` | Yes | Branch to clone |
-| `type` | Yes | Ecosystem type: `node`, `swift`, `gradle`, `python`, `go`, `rust` |
-| `mode` | No | `"cdxgen"` (default) or `"command"` (custom SBOM script) |
+| `cloneUrl` | Yes* | HTTPS clone URL (not used when `mode: "sbom-repository"`) |
+| `branch` | Yes* | Branch to clone (not used when `mode: "sbom-repository"`) |
+| `type` | Yes* | Ecosystem type: `node`, `swift`, `gradle`, `python`, `go`, `rust` (not used when `mode: "sbom-repository"`) |
+| `mode` | No | `"cdxgen"` (default), `"command"` (custom SBOM script), or `"sbom-repository"` (read from local directory) |
+| `path` | Yes** | Local directory containing `sbom-DD-MM-YYYY` folders. Required for `sbom-repository` mode. Not used in `cdxgen` or `command` modes. |
 | `sbomCommand` | No | Shell command to generate the SBOM (required when `mode: "command"`) |
 | `sbomOutput` | No | Path to the SBOM file produced by `sbomCommand` (default: `bom.json`) |
 | `enabled` | No | Set to `false` to skip this repo without removing it from the config |
 | `private` | No | Set to `true` if the repo requires authentication. sbom-sentinel validates that the appropriate token is set before starting the scan |
 | `notes` | No | Free-text notes, ignored by the tool |
+
+\* Required for `mode: "cdxgen"` and `mode: "command"`. Not used in `mode: "sbom-repository"`.
+\*\* Required for `mode: "sbom-repository"`.
+
+### sbom-repository mode
+
+`mode: "sbom-repository"` lets sbom-sentinel scan a centralised SBOM repository — a single directory that aggregates CycloneDX JSON files from multiple microservices — without cloning any source code or running cdxgen. Ideal for teams that already generate and store SBOMs as part of their CI/CD pipeline.
+
+**How it works:**
+1. sbom-sentinel reads the `path` directory and looks for subdirectories matching `sbom-DD-MM-YYYY`
+2. It selects the most recent dated folder
+3. Every `*.json` file in that folder is treated as a CycloneDX SBOM for one microservice
+4. Each SBOM is scanned with Trivy independently; results are consolidated into the global report
+
+**Config example:**
+
+```json
+{
+  "repos": [
+    {
+      "name": "i360-sbom-repository",
+      "mode": "sbom-repository",
+      "path": "/sbom-repo"
+    }
+  ]
+}
+```
+
+**In Kubernetes:** use an init container to clone the SBOM repository before sbom-sentinel starts, mounting the clone into `/sbom-repo` via a shared `emptyDir` volume. sbom-sentinel itself only needs Trivy — no git, no cdxgen.
+
+```yaml
+initContainers:
+  - name: clone-sbom-repo
+    image: alpine/git:latest
+    env:
+      - name: SBOM_REPO_TOKEN
+        valueFrom:
+          secretKeyRef: { name: my-secrets, key: SBOM_REPO_TOKEN }
+    command:
+      - sh
+      - -c
+      - |
+        git clone --depth 1 \
+          "https://x-token-auth:${SBOM_REPO_TOKEN}@bitbucket.org/myorg/sbom-repository.git" \
+          /sbom-repo
+    volumeMounts:
+      - { name: sbom-repo, mountPath: /sbom-repo }
+# Share the volume with the main container via emptyDir
+volumes:
+  - { name: sbom-repo, emptyDir: {} }
+```
+
+**Notes:**
+- `cloneUrl`, `branch`, `type`, and `private` are not used and should be omitted
+- The `path` must exist and contain at least one `sbom-DD-MM-YYYY` directory, otherwise the entry is skipped with an error
+- Microservice version is read from `metadata.component.version` in each SBOM file; if absent, it is left blank in the report
+- Each microservice's name in reports is derived from its JSON filename — e.g. `payment-service.json` → `payment-service`. The top-level `name` field only appears in configuration-level error messages
+- JSON files are not pre-validated before Trivy — an invalid or non-CycloneDX file will produce a Trivy scan error for that microservice
+- When all repos use `mode: "sbom-repository"`, `git` and `cdxgen` are skipped during `scan`. The `check` command always checks all three tools regardless of config
+- When mixing `sbom-repository` entries with `cdxgen` or `command` entries in the same config, `git` and `cdxgen` remain required
 
 ### Pre-existing SBOM detection
 
@@ -212,7 +274,7 @@ If your plan supports workspace-level tokens, one token covers all repos in the 
 
 ```bash
 BITBUCKET_TOKEN=ATBB...
-BITBUCKET_USER=x-token-auth
+# BITBUCKET_USER defaults to x-token-auth — only set if your workspace uses a different username
 ```
 
 #### GitHub
@@ -375,6 +437,8 @@ Generated files:
 
 Platform credential sections are derived automatically from each repo's clone URL — a project with only Bitbucket repos gets only the Bitbucket credential sections; mixed repos get all relevant sections.
 
+> **`sbom-repository` entries must be added manually** to `sbom-sentinel.config.json` after running `init` — the wizard does not scaffold this mode.
+
 #### `check` — Verify external tools
 
 ```bash
@@ -416,7 +480,7 @@ sbom-sentinel --help      # Print usage
 ```
 
 **Filename conventions:**
-- `commitSha` — 7-character short SHA of the cloned commit
+- `commitSha` — 7-character short SHA of the cloned commit. In `sbom-repository` mode, both `branch` and `commitSha` are set to the dated folder name (e.g. `sbom-25-04-2026`)
 - `timestamp` — UTC timestamp in `YYYYMMDDTHHMMSSz` format
 - Slashes in branch names are replaced with `-` (e.g. `feature/auth` → `feature-auth`)
 

@@ -51,6 +51,7 @@ export function buildSummary(results: RepoResult[], now: Date = new Date()): Glo
     repo: r.repo,
     branch: r.branch,
     commitSha: r.commitSha,
+    version: r.version ?? '',
     counts: countBySeverity(r.findings),
     error: r.error,
     findingsCount: r.findings.length,
@@ -74,7 +75,7 @@ export function buildSummary(results: RepoResult[], now: Date = new Date()): Glo
  * Writes JSON, HTML and TXT report files to `{outputDir}/reports/`.
  * Returns the absolute paths to each file.
  */
-export function generateReports(summary: GlobalSummary, outputDir: string): ReportFiles {
+export function generateReports(summary: GlobalSummary, outputDir: string, csvFilename?: string): ReportFiles {
   const reportsDir = join(outputDir, 'reports');
   mkdirSync(reportsDir, { recursive: true });
 
@@ -86,7 +87,7 @@ export function generateReports(summary: GlobalSummary, outputDir: string): Repo
   };
 
   writeFileSync(paths.json, generateJson(summary), 'utf8');
-  writeFileSync(paths.html, generateHtml(summary), 'utf8');
+  writeFileSync(paths.html, generateHtml(summary, csvFilename), 'utf8');
   writeFileSync(paths.txt,  generateText(summary), 'utf8');
 
   ok(`Reports written to ${reportsDir}`);
@@ -185,7 +186,7 @@ export function generateText(summary: GlobalSummary): string {
   return lines.join('\n');
 }
 
-export function generateHtml(summary: GlobalSummary): string {
+export function generateHtml(summary: GlobalSummary, csvFilename?: string): string {
   const bannerClass = summary.hasCriticalOrHigh ? 'danger' : summary.hasErrors ? 'warning' : 'ok';
   const bannerText = summary.hasCriticalOrHigh
     ? `Critical or high vulnerabilities detected — immediate attention required.`
@@ -197,6 +198,7 @@ export function generateHtml(summary: GlobalSummary): string {
     .map((s) => `<span class="badge ${s.toLowerCase()}">${s}: ${summary.totals[s]}</span>`)
     .join('\n      ');
 
+  const hasVersions = summary.repositories.some((r) => r.version);
   const repoRows = summary.repositories
     .map((r) => {
       const c = r.counts;
@@ -206,6 +208,7 @@ export function generateHtml(summary: GlobalSummary): string {
       return `
   <tr>
     <td><code>${esc(r.repo)}</code></td>
+    ${hasVersions ? `<td class="col-version">${r.version ? esc(r.version) : '-'}</td>` : ''}
     <td class="sev-CRITICAL">${c.CRITICAL === 0 ? '-' : c.CRITICAL}</td>
     <td class="sev-HIGH">${c.HIGH === 0 ? '-' : c.HIGH}</td>
     <td>${status}</td>
@@ -323,6 +326,9 @@ export function generateHtml(summary: GlobalSummary): string {
     a:hover{text-decoration:underline}
     code{font-family:ui-monospace,monospace;font-size:12px;background:#f3f4f6;padding:1px 5px;border-radius:3px}
     .error-box{background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:10px 14px;margin:6px 0;font-size:13px}
+    .col-version{color:#6b7280;font-size:12px}
+    .csv-link{display:inline-flex;align-items:center;gap:6px;margin:10px 0 4px;font-size:13px;color:#2563eb;text-decoration:none;font-weight:500}
+    .csv-link:hover{text-decoration:underline}
     footer{margin-top:36px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:14px}
     @media(prefers-color-scheme:dark){
       body{background:#111827;color:#f9fafb}
@@ -348,6 +354,8 @@ export function generateHtml(summary: GlobalSummary): string {
       .blast-radius{color:#d1d5db}
       .status-ok{color:#4ade80}
       .status-error{color:#f87171}
+      .col-version{color:#9ca3af}
+      .csv-link{color:#60a5fa}
     }
   </style>
 </head>
@@ -365,11 +373,12 @@ export function generateHtml(summary: GlobalSummary): string {
   </div>
 
   <h2>Repositories (${summary.repositories.length})</h2>
+  ${csvFilename ? `<a class="csv-link" href="${esc(csvFilename)}" download>&#8615; Download SBOM component export (${esc(csvFilename)})</a>` : ''}
   <div class="table-wrap">
   <table>
     <thead>
       <tr>
-        <th>Repository</th><th>CRITICAL</th><th>HIGH</th><th>Status</th>
+        <th>Repository</th>${hasVersions ? '<th>Version</th>' : ''}<th>CRITICAL</th><th>HIGH</th><th>Status</th>
         <th>Branch</th><th>Commit</th><th>MEDIUM</th><th>LOW</th>
       </tr>
     </thead>

@@ -62,6 +62,7 @@ export interface RepoResult {
   repo: string;
   branch: string;
   commitSha: string;
+  version?: string;
   sbomFile: string | null;
   trivyFile: string | null;
   findings: Finding[];
@@ -94,6 +95,7 @@ export interface RepoSummary {
   repo: string;
   branch: string;
   commitSha: string;
+  version?: string;
   counts: SeverityCounts;
   error: boolean;
   findingsCount: number;

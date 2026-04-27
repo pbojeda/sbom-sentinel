@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] — 2026-04-27
+
+### Added
+
+- **Version column in HTML report** — The repositories table now includes a `Version` column populated from `metadata.component.version` in each scanned SBOM. The column only appears when at least one repository has a version (transparent for cdxgen mode where version is typically absent).
+- **SBOM export CSV link in HTML report** — When the SBOM component export is enabled, a download link to the CSV file appears above the repositories table in the HTML report (relative link — works in both local filesystem and cloud storage contexts).
+
+### Changed
+
+- `schema.json`: The `path` field description now correctly states it is only used in `sbom-repository` mode. The incorrect "relative path within the repository for cdxgen" description has been removed (`path` is not read by the cdxgen SBOM generator).
+- `README`: Fixed several accuracy issues identified in review — `check` command tool-skip behavior, `path` field description, `commitSha` artifact naming in `sbom-repository` mode, `init` wizard note for `sbom-repository`, mixed-mode tool requirements, microservice naming from filenames, "Zero required npm runtime dependencies" wording.
+
+---
+
 ## [0.7.0] — 2026-04-24
 
 ### Added

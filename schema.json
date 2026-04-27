@@ -106,7 +106,7 @@
     "RepoConfig": {
       "type": "object",
       "title": "Repository configuration",
-      "required": ["name", "cloneUrl", "branch", "type"],
+      "required": ["name"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -117,8 +117,7 @@
         },
         "cloneUrl": {
           "type": "string",
-          "format": "uri",
-          "description": "HTTPS URL used to clone the repository. For private repositories mark the repo with `\"private\": true` and set GITHUB_TOKEN, BITBUCKET_TOKEN, or GIT_TOKEN as appropriate.",
+          "description": "HTTPS URL used to clone the repository. For private repositories mark the repo with `\"private\": true` and set GITHUB_TOKEN, BITBUCKET_TOKEN, or GIT_TOKEN as appropriate. Not used when mode is 'sbom-repository'.",
           "examples": [
             "https://github.com/myorg/my-backend.git",
             "https://bitbucket.org/myorg/my-repo.git",
@@ -128,24 +127,24 @@
         "branch": {
           "type": "string",
           "minLength": 1,
-          "description": "Branch to clone and scan.",
+          "description": "Branch to clone and scan. Not used when mode is 'sbom-repository'.",
           "examples": ["main", "master", "develop", "release/1.0"]
         },
         "type": {
           "type": "string",
-          "description": "Repository ecosystem type. Passed to cdxgen to select the appropriate SBOM generator.",
+          "description": "Repository ecosystem type. Passed to cdxgen to select the appropriate SBOM generator. Not used when mode is 'sbom-repository'.",
           "enum": ["node", "swift", "gradle", "python", "go", "rust"]
         },
         "mode": {
           "type": "string",
-          "description": "SBOM generation mode. Use 'cdxgen' (default) to run cdxgen automatically, or 'command' to run a custom script defined in sbomCommand.",
-          "enum": ["cdxgen", "command"],
+          "description": "SBOM generation mode. 'cdxgen' (default) clones the repository and generates SBOMs with cdxgen. 'command' runs a custom script. 'sbom-repository' reads pre-generated CycloneDX SBOMs from a local directory (requires 'path').",
+          "enum": ["cdxgen", "command", "sbom-repository"],
           "default": "cdxgen"
         },
         "path": {
           "type": "string",
-          "description": "Relative path within the repository to pass to cdxgen as the analysis root. Defaults to the repository root.",
-          "examples": [".", "backend/", "packages/core"]
+          "description": "Required for 'sbom-repository' mode: local directory containing dated sbom-DD-MM-YYYY folders with CycloneDX JSON files. Not used in 'cdxgen' or 'command' modes.",
+          "examples": ["/sbom-repo", "/var/sboms"]
         },
         "sbomCommand": {
           "type": "string",
@@ -174,18 +173,42 @@
           "examples": ["Enable when Package.resolved is committed", "Deprecated — to be removed in Q3"]
         }
       },
-      "if": {
-        "properties": { "mode": { "const": "command" } },
-        "required": ["mode"]
-      },
-      "then": {
-        "required": ["sbomCommand"],
-        "properties": {
-          "sbomCommand": {
-            "minLength": 1
+      "allOf": [
+        {
+          "if": {
+            "not": {
+              "properties": { "mode": { "const": "sbom-repository" } },
+              "required": ["mode"]
+            }
+          },
+          "then": {
+            "required": ["cloneUrl", "branch", "type"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "sbom-repository" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["path"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "command" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["sbomCommand"],
+            "properties": {
+              "sbomCommand": {
+                "minLength": 1
+              }
+            }
           }
         }
-      }
+      ]
     }
   }
 }

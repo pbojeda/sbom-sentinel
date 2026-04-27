@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { log, ok, warn, err, dim, run } from './logger.js';
@@ -145,6 +145,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
 
   // ── 4b. SBOM export (optional, non-fatal) ─────────────────────────────────
 
+  let csvFilename: string | undefined;
   if (config.config.sbomExport?.enabled !== false) {
     try {
       const prefix = config.config.sbomExport?.filePrefix ?? 'sbom-export';
@@ -154,9 +155,10 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
         prefix,
         now,
       );
-      ok(`SBOM export written: ${basename(csvPath)}`);
+      csvFilename = basename(csvPath);
+      ok(`SBOM export written: ${csvFilename}`);
       for (const storageConf of config.storageConfigs) {
-        await uploadFile(csvPath, basename(csvPath), storageConf, now);
+        await uploadFile(csvPath, csvFilename, storageConf, now);
       }
     } catch (e) {
       warn(`SBOM export failed (vulnerability scan will continue): ${e instanceof Error ? e.message : String(e)}`);
@@ -194,6 +196,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
         repo: phase.repoName,
         branch: phase.branch,
         commitSha: phase.commitSha,
+        version: readSbomVersion(phase.sbomFile),
         sbomFile: phase.sbomFile,
         trivyFile,
         findings,
@@ -221,7 +224,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
 
   // ── 7. Reports ─────────────────────────────────────────────────────────────
 
-  const reports = generateReports(globalSummary, config.outputDir);
+  const reports = generateReports(globalSummary, config.outputDir, csvFilename);
 
   // ── 7b. Upload to storage (optional) ──────────────────────────────────────
 
@@ -481,4 +484,15 @@ function formatCounts(counts: { CRITICAL: number; HIGH: number; MEDIUM: number; 
     .filter((s) => counts[s] > 0)
     .map((s) => `${counts[s]} ${s}`)
     .join(', ');
+}
+
+function readSbomVersion(sbomFile: string): string {
+  try {
+    const bom = JSON.parse(readFileSync(sbomFile, 'utf-8')) as {
+      metadata?: { component?: { version?: string } };
+    };
+    return bom.metadata?.component?.version ?? '';
+  } catch {
+    return '';
+  }
 }
