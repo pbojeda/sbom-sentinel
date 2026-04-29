@@ -9,7 +9,7 @@ import type { RepoConfig } from '../../src/types.js';
 // mkdirSync, rmSync, etc. remain real to avoid breaking the work-directory setup.
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  return { ...actual, readdirSync: vi.fn(actual.readdirSync) };
+  return { ...actual, readdirSync: vi.fn(actual.readdirSync), copyFileSync: vi.fn() };
 });
 
 vi.mock('../../src/logger.js', () => ({
@@ -455,5 +455,85 @@ describe('scan — sbom-repository mode', () => {
     const results = call[0];
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ repo: 'i360-sbom-repository', error: true });
+  });
+});
+
+// ── scan — sbom-repository mode — CSV detection ───────────────────────────────
+
+describe('scan — sbom-repository mode — CSV detection', () => {
+  beforeEach(async () => {
+    const { scanSbom }                       = await import('../../src/scanner.js');
+    const { buildSummary, generateReports }  = await import('../../src/report.js');
+    const { generateSbomExport }             = await import('../../src/sbom-export.js');
+
+    vi.mocked(scanSbom).mockReturnValue({
+      trivyFile: '/tmp/trivy.json', findings: [],
+      counts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
+    } as never);
+    vi.mocked(buildSummary).mockReturnValue({
+      date: '2026-04-28', generatedAt: '', totals: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
+      hasCriticalOrHigh: false, hasErrors: false, reposWithIssues: [], reposWithErrors: [], repositories: [],
+    } as never);
+    vi.mocked(generateReports).mockReturnValue({ json: '/tmp/r.json', html: '/tmp/r.html', txt: '/tmp/r.txt' });
+    vi.mocked(generateSbomExport).mockReturnValue('/tmp/sbom-export-2026_04_28.csv');
+  });
+
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it('copies the pre-existing CSV from the sbom-repository folder and skips generateSbomExport', async () => {
+    const { readdirSync, copyFileSync } = await import('node:fs');
+    const { generateSbomExport }        = await import('../../src/sbom-export.js');
+    const { uploadFile }                = await import('../../src/storage.js');
+
+    vi.mocked(readdirSync)
+      .mockReturnValueOnce(['sbom-28-04-2026'] as never)                        // processSbomRepository: find folder
+      .mockReturnValueOnce(['i00-api.json'] as never)                           // processSbomRepository: list jsons
+      .mockReturnValueOnce(['sbom-28-04-2026'] as never)                        // Phase 4b: findSbomRepositoryFolder
+      .mockReturnValueOnce(['SBOM_01_Insulclock_360-2026_04_28.csv'] as never); // Phase 4b: find csv
+
+    const repo: RepoConfig = {
+      name: 'i360-sbom-repository', cloneUrl: '', branch: 'master',
+      type: 'node', mode: 'sbom-repository', path: '/local/repo',
+    };
+    const config = makeConfig({
+      config: { repos: [repo] },
+      storageConfigs: [{ provider: 'ibm-cos' } as never],
+    });
+
+    await scan(config);
+
+    expect(vi.mocked(copyFileSync)).toHaveBeenCalledWith(
+      expect.stringContaining('SBOM_01_Insulclock_360-2026_04_28.csv'),
+      expect.stringContaining('SBOM_01_Insulclock_360-2026_04_28.csv'),
+    );
+    expect(vi.mocked(generateSbomExport)).not.toHaveBeenCalled();
+    expect(vi.mocked(uploadFile)).toHaveBeenCalledWith(
+      expect.stringContaining('SBOM_01_Insulclock_360-2026_04_28.csv'),
+      'SBOM_01_Insulclock_360-2026_04_28.csv',
+      expect.any(Object),
+      expect.any(Date),
+    );
+  });
+
+  it('falls back to generateSbomExport when no .csv file exists in the sbom-repository folder', async () => {
+    const { readdirSync, copyFileSync } = await import('node:fs');
+    const { generateSbomExport }        = await import('../../src/sbom-export.js');
+
+    vi.mocked(readdirSync)
+      .mockReturnValueOnce(['sbom-28-04-2026'] as never)  // processSbomRepository: find folder
+      .mockReturnValueOnce(['i00-api.json'] as never)      // processSbomRepository: list jsons
+      .mockReturnValueOnce(['sbom-28-04-2026'] as never)  // Phase 4b: findSbomRepositoryFolder
+      .mockReturnValueOnce([] as never);                   // Phase 4b: no csv files
+
+    const repo: RepoConfig = {
+      name: 'i360-sbom-repository', cloneUrl: '', branch: 'master',
+      type: 'node', mode: 'sbom-repository', path: '/local/repo',
+    };
+    const config = makeConfig({ config: { repos: [repo] } });
+
+    await scan(config);
+
+    expect(vi.mocked(copyFileSync)).not.toHaveBeenCalled();
+    expect(vi.mocked(generateSbomExport)).toHaveBeenCalled();
   });
 });

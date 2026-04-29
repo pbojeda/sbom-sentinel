@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { log, ok, warn, err, dim, run } from './logger.js';
@@ -144,19 +144,52 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
   }
 
   // ── 4b. SBOM export (optional, non-fatal) ─────────────────────────────────
+  // In sbom-repository mode, the cloned repo already contains a pre-generated CSV
+  // (produced by generate-csv.js). That CSV is richer than what sbom-sentinel would
+  // generate itself (summary section, per-section headers, SBOM Date, version prefix).
+  // We copy it to {outputDir}/reports/ and upload it. If no CSV is found there,
+  // we fall back to generating our own.
 
   let csvFilename: string | undefined;
   if (config.config.sbomExport?.enabled !== false) {
     try {
-      const prefix = config.config.sbomExport?.filePrefix ?? 'sbom-export';
-      const csvPath = generateSbomExport(
-        sbomPhase.map((r) => ({ repo: r.repoName, sbomFile: r.sbomFile })),
-        config.outputDir,
-        prefix,
-        now,
-      );
+      let csvPath: string | undefined;
+
+      const sbomRepoConfig = repos.find((r) => r.mode === 'sbom-repository' && r.path);
+      if (sbomRepoConfig) {
+        try {
+          const folderInfo = findSbomRepositoryFolder(sbomRepoConfig.path!);
+          if (folderInfo) {
+            const csvFiles = readdirSync(folderInfo.folderPath)
+              .filter((f) => f.endsWith('.csv'))
+              .sort();
+            if (csvFiles.length > 0) {
+              const srcCsv = join(folderInfo.folderPath, csvFiles[0]!);
+              const reportsDir = join(config.outputDir, 'reports');
+              mkdirSync(reportsDir, { recursive: true });
+              const destCsv = join(reportsDir, csvFiles[0]!);
+              copyFileSync(srcCsv, destCsv);
+              csvPath = destCsv;
+              ok(`SBOM export: using pre-existing CSV from sbom-repository — ${csvFiles[0]}`);
+            }
+          }
+        } catch {
+          // CSV detection failed — fall through to generate our own below
+        }
+      }
+
+      if (!csvPath) {
+        const prefix = config.config.sbomExport?.filePrefix ?? 'sbom-export';
+        csvPath = generateSbomExport(
+          sbomPhase.map((r) => ({ repo: r.repoName, sbomFile: r.sbomFile })),
+          config.outputDir,
+          prefix,
+          now,
+        );
+        ok(`SBOM export written: ${basename(csvPath)}`);
+      }
+
       csvFilename = basename(csvPath);
-      ok(`SBOM export written: ${csvFilename}`);
       for (const storageConf of config.storageConfigs) {
         await uploadFile(csvPath, csvFilename, storageConf, now);
       }
