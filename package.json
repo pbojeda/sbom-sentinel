@@ -39,11 +39,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pbojeda/sbom-sentinel.git"
+    "url": "https://bitbucket.org/insulcloud/sbom-sentinel.git"
   },
-  "homepage": "https://github.com/pbojeda/sbom-sentinel",
+  "homepage": "https://bitbucket.org/insulcloud/sbom-sentinel",
   "bugs": {
-    "url": "https://github.com/pbojeda/sbom-sentinel/issues"
+    "url": "https://bitbucket.org/insulcloud/sbom-sentinel/issues"
   },
   "engines": {
     "node": ">=20.0.0"

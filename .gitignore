@@ -19,7 +19,6 @@ deploy/
 
 # (deploy/ is gitignored; use examples/kubernetes/ as the starting template)
 .env.*.local
-.npmrc
 
 # OS
 .DS_Store
