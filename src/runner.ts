@@ -287,9 +287,14 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
 
 // ── External tool check ───────────────────────────────────────────────────────
 
+// Minimum trivy version required for CycloneDX 1.7 support.
+const TRIVY_MIN_MINOR = 71;
+
 /**
  * Checks that git, cdxgen and trivy are available in PATH.
  * Throws with clear install instructions if any are missing.
+ * Emits a warning if trivy is below the minimum version required for
+ * CycloneDX 1.7 SBOM scanning (>= 0.71.0).
  *
  * Also exported so the CLI `check` command can call it directly.
  * `skipCdxgen` and `skipGit` can be set to true when all repos use
@@ -323,6 +328,21 @@ export function checkExternalTools(
         `\n\nInstall them and run again. See the README for details.`,
     );
   }
+
+  try {
+    const trivyOut = run('trivy --version', { stdio: 'pipe' });
+    const m = trivyOut.match(/Version:\s*(\d+)\.(\d+)\.\d+/);
+    if (m) {
+      const major = parseInt(m[1], 10);
+      const minor = parseInt(m[2], 10);
+      if (major === 0 && minor < TRIVY_MIN_MINOR) {
+        warn(
+          `trivy ${m[1]}.${m[2]} detected — CycloneDX 1.7 SBOMs require trivy ≥ 0.71.0. ` +
+            `Upgrade: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin`,
+        );
+      }
+    }
+  } catch { /* non-fatal — trivy presence already validated above */ }
 }
 
 // ── Token expiry check ────────────────────────────────────────────────────────
