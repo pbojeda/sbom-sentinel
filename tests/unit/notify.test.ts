@@ -363,7 +363,7 @@ describe('buildEmailBody', () => {
   it('includes attribution footer', () => {
     const body = buildEmailBody(SUMMARY_CRITICAL);
     expect(body).toContain('sbom-sentinel');
-    expect(body).toContain('github.com/pbojeda/sbom-sentinel');
+    expect(body).toContain('bitbucket.org/insulcloud/sbom-sentinel');
   });
 });
 

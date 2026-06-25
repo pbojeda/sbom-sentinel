@@ -1,8 +1,6 @@
 # sbom-sentinel
 
-[![npm version](https://badge.fury.io/js/sbom-sentinel.svg)](https://www.npmjs.com/package/sbom-sentinel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/pbojeda/sbom-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/pbojeda/sbom-sentinel/actions/workflows/ci.yml)
 [![Node >=20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 
 Automated SBOM generation and vulnerability scanning for multiple Git repositories. Generates CycloneDX 1.6 SBOMs with cdxgen, scans with Trivy, and notifies via Slack or email when critical or high vulnerabilities are found.
@@ -109,7 +107,6 @@ Run `sbom-sentinel init` to scaffold the full project interactively, or create `
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json",
   "manufacturer": "My Company, S.L.",
   "outputDir": "./artifacts",
   "notifications": {
@@ -707,7 +704,7 @@ spec:
           #   - name: registry-pull-secret
           containers:
             - name: sentinel
-              image: ghcr.io/pbojeda/sbom-sentinel:latest
+              image: de.icr.io/i360-infra-dev-dev/sbom-sentinel:latest
               args: ["scan"]
               envFrom:
                 - secretRef:

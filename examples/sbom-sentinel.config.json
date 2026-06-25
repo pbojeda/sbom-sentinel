@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json",
   "manufacturer": "My Company",
   "outputDir": "./artifacts",
   "notifications": {

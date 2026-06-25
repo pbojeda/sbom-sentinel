@@ -131,12 +131,12 @@ export async function runWizard(rl: RlInterface, dirName: string): Promise<Wizar
 
   let k8sNamespace = 'security';
   let k8sSchedule  = '0 2 * * *';
-  let k8sImage     = 'ghcr.io/pbojeda/sbom-sentinel:latest';
+  let k8sImage     = 'de.icr.io/i360-infra-dev-dev/sbom-sentinel:latest';
 
   if (kubernetes) {
     k8sNamespace = await ask(rl, '  Kubernetes namespace', 'security');
     k8sSchedule  = await ask(rl, '  CronJob schedule (cron)', '0 2 * * *');
-    k8sImage     = await ask(rl, '  Container image', 'ghcr.io/pbojeda/sbom-sentinel:latest');
+    k8sImage     = await ask(rl, '  Container image', 'de.icr.io/i360-infra-dev-dev/sbom-sentinel:latest');
   }
 
   const docker = await askYesNo(rl, 'Generate Dockerfile and docker-compose.yml?', false);
@@ -166,7 +166,6 @@ export function generateFiles(answers: WizardAnswers, targetDir: string): string
 
   // ── sbom-sentinel.config.json ───────────────────────────────────────────────
   const config = {
-    $schema: 'https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json',
     manufacturer: answers.projectName,
     outputDir: './artifacts',
     notifications: {
@@ -370,8 +369,14 @@ RUN npm install -g @cyclonedx/cdxgen@11
 RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \\
     | sh -s -- -b /usr/local/bin
 
-# sbom-sentinel
-RUN npm install -g sbom-sentinel
+# sbom-sentinel — installed from private Verdaccio registry
+# Build with: docker build --secret id=NPM_AUTHTOKEN,env=NPM_AUTHTOKEN -t <image> .
+RUN --mount=type=secret,id=NPM_AUTHTOKEN \\
+    TOKEN=$(cat /run/secrets/NPM_AUTHTOKEN) \\
+ && echo "registry=https://i-verdaccio-insulcloud.i360-infra-dev-cluster-ik-eaf5bc950b7aa3accb3329ec6e66e231-0000.eu-de.containers.appdomain.cloud/" > /root/.npmrc \\
+ && echo "//i-verdaccio-insulcloud.i360-infra-dev-cluster-ik-eaf5bc950b7aa3accb3329ec6e66e231-0000.eu-de.containers.appdomain.cloud/:_authToken=\${TOKEN}" >> /root/.npmrc \\
+ && npm install -g sbom-sentinel \\
+ && rm /root/.npmrc
 
 WORKDIR /app
 

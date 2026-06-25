@@ -36,7 +36,7 @@ function makeAnswers(overrides: Partial<WizardAnswers> = {}): WizardAnswers {
     kubernetes:   false,
     k8sNamespace: 'security',
     k8sSchedule:  '0 2 * * *',
-    k8sImage:     'ghcr.io/pbojeda/sbom-sentinel:latest',
+    k8sImage:     'de.icr.io/i360-infra-dev-dev/sbom-sentinel:latest',
     docker:       false,
     ci:           'none',
     ...overrides,

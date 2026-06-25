@@ -19,7 +19,7 @@ Thank you for taking the time to contribute. This document covers how to report 
 
 ## Reporting issues
 
-Use [GitHub Issues](https://github.com/pbojeda/sbom-sentinel/issues) to report bugs or request features.
+Use [Bitbucket Issues](https://bitbucket.org/insulcloud/sbom-sentinel/issues) to report bugs or request features.
 
 **For bugs**, please include:
 - sbom-sentinel version (`sbom-sentinel --version`)
@@ -49,7 +49,7 @@ Before opening a pull request for a significant change, please open an issue fir
 **Clone and install:**
 
 ```bash
-git clone https://github.com/pbojeda/sbom-sentinel.git
+git clone https://bitbucket.org/insulcloud/sbom-sentinel.git
 cd sbom-sentinel
 npm install
 ```
@@ -150,6 +150,6 @@ npm run test:coverage   # check coverage before submitting
 
 ## Security
 
-If you discover a security vulnerability, **do not open a public issue**. Please report it privately via [GitHub Security Advisories](https://github.com/pbojeda/sbom-sentinel/security/advisories/new) or by emailing the maintainer directly.
+If you discover a security vulnerability, **do not open a public issue**. Please report it by emailing the maintainer directly.
 
 See also: [credential safety](#coding-guidelines) — the tool handles git tokens and SMTP passwords; any change to those code paths requires extra scrutiny.

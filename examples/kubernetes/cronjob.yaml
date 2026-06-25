@@ -22,7 +22,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: sentinel
-              image: ghcr.io/pbojeda/sbom-sentinel:latest
+              image: de.icr.io/i360-infra-dev-dev/sbom-sentinel:latest
               imagePullPolicy: Always
               args: ["scan"]
 

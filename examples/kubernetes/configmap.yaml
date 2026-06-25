@@ -6,7 +6,6 @@ metadata:
 data:
   sbom-sentinel.config.json: |
     {
-      "$schema": "https://raw.githubusercontent.com/pbojeda/sbom-sentinel/main/schema.json",
       "manufacturer": "My Company",
       "outputDir": "/app/artifacts",
       "notifications": {

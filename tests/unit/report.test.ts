@@ -225,6 +225,7 @@ describe('generateText', () => {
   it('contains the sbom-sentinel attribution footer', () => {
     const summary = buildSummary([], NOW);
     expect(generateText(summary)).toContain('sbom-sentinel');
+    expect(generateText(summary)).toContain('bitbucket.org/insulcloud/sbom-sentinel');
   });
 });
 

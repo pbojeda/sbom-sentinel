@@ -180,7 +180,7 @@ export function generateText(summary: GlobalSummary): string {
 
   lines.push(SEP);
   lines.push(`Generated at: ${summary.generatedAt}`);
-  lines.push('sbom-sentinel  https://github.com/pbojeda/sbom-sentinel');
+  lines.push('sbom-sentinel  https://bitbucket.org/insulcloud/sbom-sentinel');
   lines.push(SEP);
 
   return lines.join('\n');
@@ -391,7 +391,7 @@ export function generateHtml(summary: GlobalSummary, csvFilename?: string): stri
 
   <footer>
     Generated at ${esc(summary.generatedAt)} &middot;
-    <a href="https://github.com/pbojeda/sbom-sentinel" target="_blank" rel="noopener">sbom-sentinel</a>
+    <a href="https://bitbucket.org/insulcloud/sbom-sentinel" target="_blank" rel="noopener">sbom-sentinel</a>
   </footer>
 </div>
 </body>

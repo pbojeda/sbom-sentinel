@@ -311,7 +311,7 @@ export function buildEmailBody(summary: GlobalSummary, reportUrl?: string): stri
   lines.push('');
   lines.push('---');
   lines.push(`Generated at: ${summary.generatedAt}`);
-  lines.push('sbom-sentinel — https://github.com/pbojeda/sbom-sentinel');
+  lines.push('sbom-sentinel — https://bitbucket.org/insulcloud/sbom-sentinel');
 
   return lines.join('\n');
 }
