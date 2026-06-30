@@ -145,6 +145,12 @@
           "description": "Required for 'sbom-repository' mode: local directory containing dated sbom-DD-MM-YYYY folders with CycloneDX JSON files. Not used in 'cdxgen' or 'command' modes.",
           "examples": ["/sbom-repo", "/var/sboms"]
         },
+        "maxSbomAgeDays": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Only for 'sbom-repository' mode: maximum age in calendar days (UTC) of the most recent sbom-DD-MM-YYYY folder. If the newest folder is older than this threshold, the scan fails with an error and triggers an onErrors notification. Set to at least 4 to account for weekends. Omit to disable the check.",
+          "examples": [4, 7]
+        },
         "sbomCommand": {
           "type": "string",
           "description": "Shell command to run when mode is 'command'. Executed in the cloned repository root. Must produce the SBOM file at the path specified by sbomOutput.",

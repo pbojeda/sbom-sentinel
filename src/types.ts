@@ -27,6 +27,7 @@ export interface RepoConfig {
   type: 'node' | 'swift' | 'gradle' | 'python' | 'go' | 'rust';
   mode?: 'cdxgen' | 'command' | 'sbom-repository';
   path?: string;
+  maxSbomAgeDays?: number;
   sbomCommand?: string;
   sbomOutput?: string;
   enabled?: boolean;
@@ -68,6 +69,7 @@ export interface RepoResult {
   findings: Finding[];
   error: boolean;
   errorMessage?: string;
+  staleWarning?: string;
 }
 
 export interface GlobalSummary {
@@ -76,6 +78,7 @@ export interface GlobalSummary {
   totals: SeverityCounts;
   hasCriticalOrHigh: boolean;
   hasErrors: boolean;
+  hasStaleSboms: boolean;
   reposWithIssues: Array<{
     repo: string;
     branch: string;
@@ -87,6 +90,10 @@ export interface GlobalSummary {
     repo: string;
     branch: string;
     errorMessage: string;
+  }>;
+  reposWithStaleWarnings: Array<{
+    folderDate: string;
+    message: string;
   }>;
   repositories: RepoSummary[];
 }

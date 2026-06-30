@@ -53,6 +53,17 @@ const RESULT_ERROR: RepoResult = {
   errorMessage: 'Failed to clone: authentication failed',
 };
 
+const RESULT_STALE: RepoResult = {
+  repo: 'my-api',
+  branch: 'sbom-24-06-2026',
+  commitSha: 'sbom-24-06-2026',
+  sbomFile: '/sbom-repo/sbom-24-06-2026/my-api.json',
+  trivyFile: '/artifacts/trivy.json',
+  findings: [],
+  error: false,
+  staleWarning: 'SBOM folder "sbom-24-06-2026" is 6 day(s) old (maxSbomAgeDays: 4) — scanning with potentially outdated SBOM data',
+};
+
 const NOW = new Date('2024-04-14T13:00:00.000Z');
 
 // ── buildSummary ──────────────────────────────────────────────────────────────
@@ -145,6 +156,26 @@ describe('buildSummary', () => {
     expect(summary.hasCriticalOrHigh).toBe(false);
     expect(summary.hasErrors).toBe(false);
   });
+
+  it('sets hasStaleSboms when any result has staleWarning', () => {
+    const summary = buildSummary([RESULT_CLEAN, RESULT_STALE], NOW);
+    expect(summary.hasStaleSboms).toBe(true);
+  });
+
+  it('does not set hasStaleSboms when no result has staleWarning', () => {
+    const summary = buildSummary([RESULT_CLEAN, RESULT_WITH_FINDINGS], NOW);
+    expect(summary.hasStaleSboms).toBe(false);
+  });
+
+  it('populates reposWithStaleWarnings with unique folderDates', () => {
+    const stale2: RepoResult = { ...RESULT_STALE, repo: 'my-other-api' }; // same folderDate
+    const summary = buildSummary([RESULT_STALE, stale2], NOW);
+    expect(summary.reposWithStaleWarnings).toHaveLength(1);
+    expect(summary.reposWithStaleWarnings[0]).toMatchObject({
+      folderDate: 'sbom-24-06-2026',
+      message: expect.stringContaining('6 day(s) old'),
+    });
+  });
 });
 
 // ── generateJson ──────────────────────────────────────────────────────────────
@@ -226,6 +257,20 @@ describe('generateText', () => {
     const summary = buildSummary([], NOW);
     expect(generateText(summary)).toContain('sbom-sentinel');
     expect(generateText(summary)).toContain('bitbucket.org/insulcloud/sbom-sentinel');
+  });
+
+  it('shows WARNING status when only stale (no errors, no CRITICAL/HIGH)', () => {
+    const summary = buildSummary([RESULT_STALE], NOW);
+    expect(generateText(summary)).toContain('STATUS: WARNING');
+    expect(generateText(summary)).toContain('stale');
+  });
+
+  it('shows stale section with the warning message when hasStaleSboms', () => {
+    const summary = buildSummary([RESULT_STALE], NOW);
+    const text = generateText(summary);
+    expect(text).toContain('STALE SBOM DATA');
+    expect(text).toContain('sbom-24-06-2026');
+    expect(text).toContain('6 day(s) old');
   });
 });
 
@@ -384,6 +429,24 @@ describe('generateHtml', () => {
   it('does not render errors section when no errors', () => {
     const summary = buildSummary([RESULT_WITH_FINDINGS], NOW);
     expect(generateHtml(summary)).not.toContain('Scan Errors');
+  });
+
+  it('uses the warning banner class when only stale data (no CRITICAL/HIGH, no errors)', () => {
+    const summary = buildSummary([RESULT_STALE], NOW);
+    expect(generateHtml(summary)).toContain('class="banner warning"');
+  });
+
+  it('renders stale section when hasStaleSboms', () => {
+    const summary = buildSummary([RESULT_STALE], NOW);
+    const html = generateHtml(summary);
+    expect(html).toContain('Stale SBOM Data');
+    expect(html).toContain('sbom-24-06-2026');
+    expect(html).toContain('6 day(s) old');
+  });
+
+  it('does not render stale section when no stale data', () => {
+    const summary = buildSummary([RESULT_CLEAN], NOW);
+    expect(generateHtml(summary)).not.toContain('Stale SBOM Data');
   });
 
   it('does not contain external CSS or JS links', () => {

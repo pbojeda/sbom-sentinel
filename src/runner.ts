@@ -100,6 +100,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
     sbomFile: string | null;
     error: boolean;
     errorMessage?: string;
+    staleWarning?: string;
   }
 
   const sbomPhase: SbomPhaseResult[] = [];
@@ -107,7 +108,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
   for (const repo of repos) {
     if (repo.mode === 'sbom-repository') {
       log(`\n── ${repo.name} — sbom-repository mode ──`);
-      const expanded = processSbomRepository(repo);
+      const expanded = processSbomRepository(repo, now);
       sbomPhase.push(...expanded);
       continue;
     }
@@ -213,6 +214,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
         findings: [],
         error: true,
         errorMessage: phase.errorMessage,
+        staleWarning: phase.staleWarning,
       });
       continue;
     }
@@ -234,6 +236,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
         trivyFile,
         findings,
         error: false,
+        staleWarning: phase.staleWarning,
       });
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e);
@@ -247,6 +250,7 @@ export async function scan(config: LoadedConfig): Promise<RunResult> {
         findings: [],
         error: true,
         errorMessage,
+        staleWarning: phase.staleWarning,
       });
     }
   }
@@ -466,15 +470,27 @@ export function findSbomRepositoryFolder(
   if (entries.length === 0) return null;
 
   entries.sort((a, b) => {
-    const toMs = (d: string) => {
+    const toUtcMs = (d: string) => {
       const [dd, mm, yyyy] = d.slice(5).split('-').map(Number) as [number, number, number];
-      return new Date(yyyy, mm - 1, dd).getTime();
+      return Date.UTC(yyyy, mm - 1, dd);
     };
-    return toMs(a) - toMs(b);
+    return toUtcMs(a) - toUtcMs(b);
   });
 
   const latest = entries[entries.length - 1]!;
   return { folderPath: join(repositoryPath, latest), folderDate: latest };
+}
+
+/**
+ * Returns the age of a `sbom-DD-MM-YYYY` folder name in whole UTC calendar days
+ * relative to `now`. A negative value means the folder date is in the future.
+ * Exported for testing.
+ */
+export function sbomFolderAgeInDays(folderDate: string, now: Date): number {
+  const [dd, mm, yyyy] = folderDate.slice(5).split('-').map(Number) as [number, number, number];
+  const folderUtc = Date.UTC(yyyy, mm - 1, dd);
+  const nowUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.floor((nowUtc - folderUtc) / 86_400_000);
 }
 
 interface SbomRepoPhaseResult {
@@ -484,9 +500,10 @@ interface SbomRepoPhaseResult {
   sbomFile: string | null;
   error: boolean;
   errorMessage?: string;
+  staleWarning?: string;
 }
 
-function processSbomRepository(repo: RepoConfig): SbomRepoPhaseResult[] {
+function processSbomRepository(repo: RepoConfig, now: Date): SbomRepoPhaseResult[] {
   const repositoryPath = repo.path;
   if (!repositoryPath) {
     return [{ repoName: repo.name, branch: '', commitSha: '', sbomFile: null, error: true,
@@ -507,6 +524,19 @@ function processSbomRepository(repo: RepoConfig): SbomRepoPhaseResult[] {
   }
 
   const { folderPath, folderDate } = folderInfo;
+
+  let staleWarning: string | undefined;
+  if (repo.maxSbomAgeDays != null) {
+    const age = sbomFolderAgeInDays(folderDate, now);
+    if (age < 0) {
+      return [{ repoName: repo.name, branch: folderDate, commitSha: folderDate, sbomFile: null, error: true,
+        errorMessage: `SBOM folder "${folderDate}" has a future date — check the clock on the CI system that generates SBOMs` }];
+    }
+    if (age > repo.maxSbomAgeDays) {
+      staleWarning = `SBOM folder "${folderDate}" is ${age} day(s) old (maxSbomAgeDays: ${repo.maxSbomAgeDays}) — scanning with potentially outdated SBOM data`;
+      warn(staleWarning);
+    }
+  }
 
   let jsonFiles: string[];
   try {
@@ -529,6 +559,7 @@ function processSbomRepository(repo: RepoConfig): SbomRepoPhaseResult[] {
     commitSha: folderDate,
     sbomFile: join(folderPath, f),
     error: false,
+    staleWarning,
   }));
 }
 

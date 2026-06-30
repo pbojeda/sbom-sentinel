@@ -132,6 +132,14 @@ function validate(raw: unknown): SentinelConfig {
           `repos[${i}] ("${r['name']}") with mode "sbom-repository" is missing required field: "path" (local directory path).`,
         );
       }
+      const maxAge = r['maxSbomAgeDays'];
+      if (maxAge !== undefined) {
+        if (typeof maxAge !== 'number' || !Number.isInteger(maxAge) || maxAge < 1) {
+          throw new Error(
+            `repos[${i}] ("${r['name']}") field "maxSbomAgeDays" must be a positive integer (got ${JSON.stringify(maxAge)}).`,
+          );
+        }
+      }
     } else {
       if (typeof r['cloneUrl'] !== 'string' || !r['cloneUrl'].trim()) {
         throw new Error(`repos[${i}] ("${r['name']}") is missing required field: "cloneUrl".`);

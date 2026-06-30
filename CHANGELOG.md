@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.5] — 2026-06-30
+
+### Added
+
+- **SBOM freshness check (`maxSbomAgeDays`)** — `sbom-repository` mode repos now accept an optional `maxSbomAgeDays: <n>` field. When set, `processSbomRepository` computes the UTC calendar-day age of the most recent `sbom-DD-MM-YYYY` folder and returns an error result (triggering `onErrors` → Slack) if it exceeds the threshold. A negative age (folder date in the future) is also an error. The check is skipped when the field is omitted. Set to at least `4` for deployments where CI only runs on weekdays.
+- `sbomFolderAgeInDays(folderDate, now)` — exported helper for testing; computes age in whole UTC days.
+
+### Changed
+
+- `findSbomRepositoryFolder`: folder sorting now uses `Date.UTC` instead of `new Date(local)` for consistency with the freshness check.
+- `processSbomRepository`: now receives `now: Date` parameter (threaded from `scan()`) to enable deterministic testing via `vi.setSystemTime()`.
+
+### Fixed
+
+- Config validator now rejects `maxSbomAgeDays` values that are not positive integers (rejects `0`, negative numbers, floats, and non-numeric types).
+
+---
+
 ## [0.8.0] — 2026-04-27
 
 ### Added
