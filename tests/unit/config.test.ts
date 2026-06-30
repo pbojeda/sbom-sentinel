@@ -482,3 +482,51 @@ describe('loadConfig', () => {
     rmSync(dir, { recursive: true });
   });
 });
+
+// ── validate — maxSbomAgeDays ─────────────────────────────────────────────────
+
+describe('validate — maxSbomAgeDays', () => {
+  const SBOM_REPO = { name: 'i360-sbom-repository', mode: 'sbom-repository', path: '/sbom-repo' };
+
+  it('accepts a valid positive integer', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [{ ...SBOM_REPO, maxSbomAgeDays: 4 }] });
+    expect(() => loadConfig([], dir)).not.toThrow();
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when maxSbomAgeDays is 0', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [{ ...SBOM_REPO, maxSbomAgeDays: 0 }] });
+    expect(() => loadConfig([], dir)).toThrow(/maxSbomAgeDays/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when maxSbomAgeDays is negative', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [{ ...SBOM_REPO, maxSbomAgeDays: -1 }] });
+    expect(() => loadConfig([], dir)).toThrow(/maxSbomAgeDays/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when maxSbomAgeDays is a float', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [{ ...SBOM_REPO, maxSbomAgeDays: 1.5 }] });
+    expect(() => loadConfig([], dir)).toThrow(/maxSbomAgeDays/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('throws when maxSbomAgeDays is a string', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [{ ...SBOM_REPO, maxSbomAgeDays: '4' }] });
+    expect(() => loadConfig([], dir)).toThrow(/maxSbomAgeDays/);
+    rmSync(dir, { recursive: true });
+  });
+
+  it('omitting maxSbomAgeDays is valid (check is disabled)', () => {
+    const dir = makeTempDir();
+    writeConfigFile(dir, { repos: [SBOM_REPO] });
+    expect(() => loadConfig([], dir)).not.toThrow();
+    rmSync(dir, { recursive: true });
+  });
+});

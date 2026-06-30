@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { checkTokenExpiry, resolveCredentials, scan, findSbomRepositoryFolder } from '../../src/runner.js';
+import { checkTokenExpiry, resolveCredentials, scan, findSbomRepositoryFolder, sbomFolderAgeInDays } from '../../src/runner.js';
 import type { LoadedConfig } from '../../src/config.js';
 import type { RepoConfig } from '../../src/types.js';
 
@@ -535,5 +535,152 @@ describe('scan — sbom-repository mode — CSV detection', () => {
 
     expect(vi.mocked(copyFileSync)).not.toHaveBeenCalled();
     expect(vi.mocked(generateSbomExport)).toHaveBeenCalled();
+  });
+});
+
+// ── sbomFolderAgeInDays ───────────────────────────────────────────────────────
+
+describe('sbomFolderAgeInDays', () => {
+  it('returns 0 when the folder date is today (UTC)', () => {
+    const now = new Date('2026-06-30T06:00:00Z');
+    expect(sbomFolderAgeInDays('sbom-30-06-2026', now)).toBe(0);
+  });
+
+  it('returns 1 when the folder date is yesterday', () => {
+    const now = new Date('2026-06-30T06:00:00Z');
+    expect(sbomFolderAgeInDays('sbom-29-06-2026', now)).toBe(1);
+  });
+
+  it('returns 5 when the folder is 5 days old', () => {
+    const now = new Date('2026-06-30T06:00:00Z');
+    expect(sbomFolderAgeInDays('sbom-25-06-2026', now)).toBe(5);
+  });
+
+  it('returns negative when the folder date is in the future', () => {
+    const now = new Date('2026-06-30T06:00:00Z');
+    expect(sbomFolderAgeInDays('sbom-01-07-2026', now)).toBe(-1);
+  });
+
+  it('handles month boundary correctly (UTC, not local time)', () => {
+    const now = new Date('2026-07-01T00:30:00Z');
+    expect(sbomFolderAgeInDays('sbom-30-06-2026', now)).toBe(1);
+  });
+});
+
+// ── scan — sbom-repository mode — freshness check ─────────────────────────────
+
+describe('scan — sbom-repository mode — freshness check', () => {
+  beforeEach(async () => {
+    const { buildSummary, generateReports } = await import('../../src/report.js');
+    vi.mocked(buildSummary).mockReturnValue({
+      date: '2026-06-30', generatedAt: '', totals: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
+      hasCriticalOrHigh: false, hasErrors: false, reposWithIssues: [], reposWithErrors: [], repositories: [],
+    } as never);
+    vi.mocked(generateReports).mockReturnValue({ json: '/tmp/r.json', html: '/tmp/r.html', txt: '/tmp/r.txt' });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('passes when folder is within maxSbomAgeDays', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-30T06:00:00Z')); // Monday
+
+    const { readdirSync } = await import('node:fs');
+    const { scanSbom }    = await import('../../src/scanner.js');
+    const { buildSummary } = await import('../../src/report.js');
+    vi.mocked(readdirSync)
+      .mockReturnValueOnce(['sbom-27-06-2026'] as never)  // Friday — 3 days old
+      .mockReturnValueOnce(['api.json'] as never);
+    vi.mocked(scanSbom).mockReturnValue({
+      trivyFile: '/tmp/t.json', findings: [],
+      counts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
+    } as never);
+
+    const repo: RepoConfig = {
+      name: 'i360-sbom-repository', cloneUrl: '', branch: '', type: 'node',
+      mode: 'sbom-repository', path: '/sbom-repo', maxSbomAgeDays: 4,
+    };
+    await scan(makeConfig({ config: { repos: [repo] } }));
+
+    const results = vi.mocked(buildSummary).mock.calls[0]![0];
+    expect(results[0]).toMatchObject({ error: false });
+  });
+
+  it('scans and records staleWarning when folder exceeds maxSbomAgeDays', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-30T06:00:00Z')); // Monday
+
+    const { readdirSync }  = await import('node:fs');
+    const { scanSbom }     = await import('../../src/scanner.js');
+    const { buildSummary } = await import('../../src/report.js');
+    vi.mocked(readdirSync)
+      .mockReturnValueOnce(['sbom-24-06-2026'] as never)  // 6 days old — stale
+      .mockReturnValueOnce(['api.json'] as never);         // json files in stale folder
+    vi.mocked(scanSbom).mockReturnValue({
+      trivyFile: '/tmp/t.json', findings: [],
+      counts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
+    } as never);
+
+    const repo: RepoConfig = {
+      name: 'i360-sbom-repository', cloneUrl: '', branch: '', type: 'node',
+      mode: 'sbom-repository', path: '/sbom-repo', maxSbomAgeDays: 4,
+    };
+    await scan(makeConfig({ config: { repos: [repo] } }));
+
+    const results = vi.mocked(buildSummary).mock.calls[0]![0];
+    expect(results[0]).toMatchObject({
+      error: false,
+      staleWarning: expect.stringContaining('6 day(s) old'),
+    });
+    expect(vi.mocked(scanSbom)).toHaveBeenCalled();
+  });
+
+  it('records an error when folder date is in the future', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-30T06:00:00Z'));
+
+    const { readdirSync }  = await import('node:fs');
+    const { buildSummary } = await import('../../src/report.js');
+    vi.mocked(readdirSync).mockReturnValueOnce(['sbom-01-07-2026'] as never); // tomorrow
+
+    const repo: RepoConfig = {
+      name: 'i360-sbom-repository', cloneUrl: '', branch: '', type: 'node',
+      mode: 'sbom-repository', path: '/sbom-repo', maxSbomAgeDays: 4,
+    };
+    await scan(makeConfig({ config: { repos: [repo] } }));
+
+    const results = vi.mocked(buildSummary).mock.calls[0]![0];
+    expect(results[0]).toMatchObject({
+      error: true,
+      errorMessage: expect.stringContaining('future date'),
+    });
+  });
+
+  it('skips freshness check when maxSbomAgeDays is not set', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-30T06:00:00Z'));
+
+    const { readdirSync } = await import('node:fs');
+    const { scanSbom }    = await import('../../src/scanner.js');
+    const { buildSummary } = await import('../../src/report.js');
+    vi.mocked(readdirSync)
+      .mockReturnValueOnce(['sbom-01-01-2026'] as never)  // 180 days old — but no limit
+      .mockReturnValueOnce(['api.json'] as never);
+    vi.mocked(scanSbom).mockReturnValue({
+      trivyFile: '/tmp/t.json', findings: [],
+      counts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
+    } as never);
+
+    const repo: RepoConfig = {
+      name: 'i360-sbom-repository', cloneUrl: '', branch: '', type: 'node',
+      mode: 'sbom-repository', path: '/sbom-repo',
+    };
+    await scan(makeConfig({ config: { repos: [repo] } }));
+
+    const results = vi.mocked(buildSummary).mock.calls[0]![0];
+    expect(results[0]).toMatchObject({ error: false });
   });
 });

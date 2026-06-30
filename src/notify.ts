@@ -35,8 +35,9 @@ export async function notify(summary: GlobalSummary, config: NotifyConfig): Prom
   const notifCfg = config.notifications ?? {};
   const triggerVulns  = notifCfg.onVulnerabilities !== false && summary.hasCriticalOrHigh;
   const triggerErrors = notifCfg.onErrors !== false && summary.hasErrors;
+  const triggerStale  = notifCfg.onErrors !== false && summary.hasStaleSboms;
 
-  if (!triggerVulns && !triggerErrors) return;
+  if (!triggerVulns && !triggerErrors && !triggerStale) return;
 
   const tasks: Promise<void>[] = [];
 
@@ -162,6 +163,9 @@ export function buildSlackMessage(summary: GlobalSummary, reportUrl?: string): s
   if (summary.hasErrors) {
     lines.push('*SBOM Sentinel — SCAN ERRORS*');
   }
+  if (summary.hasStaleSboms) {
+    lines.push('*SBOM Sentinel — STALE SBOM DATA*');
+  }
 
   lines.push(`Date: ${summary.date}`);
   lines.push('');
@@ -188,6 +192,15 @@ export function buildSlackMessage(summary: GlobalSummary, reportUrl?: string): s
     lines.push('Failed repositories:');
     for (const e of summary.reposWithErrors) {
       lines.push(`• *${e.repo}* (${e.branch}): ${e.errorMessage}`);
+    }
+  }
+
+  // Stale SBOM warnings
+  if (summary.reposWithStaleWarnings.length > 0) {
+    lines.push('');
+    lines.push('Stale SBOM data (scan ran but results may be outdated):');
+    for (const w of summary.reposWithStaleWarnings) {
+      lines.push(`• *${w.folderDate}*: ${w.message}`);
     }
   }
 
@@ -258,6 +271,10 @@ export function buildEmailSubject(summary: GlobalSummary): string {
     parts.push('scan errors detected');
   }
 
+  if (summary.hasStaleSboms) {
+    parts.push('stale SBOM data');
+  }
+
   parts.push(`— ${summary.date}`);
   return parts.join(' ');
 }
@@ -273,6 +290,9 @@ export function buildEmailBody(summary: GlobalSummary, reportUrl?: string): stri
   }
   if (summary.hasErrors) {
     lines.push('SBOM Sentinel — SCAN ERRORS');
+  }
+  if (summary.hasStaleSboms) {
+    lines.push('SBOM Sentinel — STALE SBOM DATA');
   }
 
   lines.push(`Date: ${summary.date}`);
@@ -297,6 +317,14 @@ export function buildEmailBody(summary: GlobalSummary, reportUrl?: string): stri
     lines.push('Failed repositories:');
     for (const e of summary.reposWithErrors) {
       lines.push(`  ${e.repo} (${e.branch}): ${e.errorMessage}`);
+    }
+  }
+
+  if (summary.reposWithStaleWarnings.length > 0) {
+    lines.push('');
+    lines.push('Stale SBOM data (scan ran but results may be outdated):');
+    for (const w of summary.reposWithStaleWarnings) {
+      lines.push(`  ${w.folderDate}: ${w.message}`);
     }
   }
 

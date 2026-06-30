@@ -37,8 +37,10 @@ function makeSummary(overrides: Partial<GlobalSummary> = {}): GlobalSummary {
     totals: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 },
     hasCriticalOrHigh: false,
     hasErrors: false,
+    hasStaleSboms: false,
     reposWithIssues: [],
     reposWithErrors: [],
+    reposWithStaleWarnings: [],
     repositories: [],
     ...overrides,
   };
@@ -69,6 +71,14 @@ const SUMMARY_ERRORS = makeSummary({
 });
 
 const SUMMARY_CLEAN = makeSummary();
+
+const SUMMARY_STALE = makeSummary({
+  hasStaleSboms: true,
+  reposWithStaleWarnings: [{
+    folderDate: 'sbom-24-06-2026',
+    message: 'SBOM folder "sbom-24-06-2026" is 6 day(s) old (maxSbomAgeDays: 4) — scanning with potentially outdated SBOM data',
+  }],
+});
 
 const WEBHOOK_URL = 'https://hooks.slack.com/services/T000/B000/xxxx';
 
@@ -169,6 +179,19 @@ describe('notify — Slack', () => {
 
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it('sends to Slack when hasStaleSboms is true', async () => {
+    await notify(SUMMARY_STALE, { slackWebhookUrl: WEBHOOK_URL });
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it('does not send for stale data when onErrors: false', async () => {
+    await notify(SUMMARY_STALE, {
+      slackWebhookUrl: WEBHOOK_URL,
+      notifications: { onErrors: false },
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });
 
 // ── buildSlackMessage ─────────────────────────────────────────────────────────
@@ -216,6 +239,13 @@ describe('buildSlackMessage', () => {
     const msg = buildSlackMessage(SUMMARY_ERRORS);
     expect(msg).toContain('my-broken-repo');
     expect(msg).toContain('authentication failed');
+  });
+
+  it('includes STALE headline and folder info when hasStaleSboms', () => {
+    const msg = buildSlackMessage(SUMMARY_STALE);
+    expect(msg).toContain('STALE');
+    expect(msg).toContain('sbom-24-06-2026');
+    expect(msg).toContain('6 day(s) old');
   });
 });
 
@@ -365,6 +395,13 @@ describe('buildEmailBody', () => {
     expect(body).toContain('sbom-sentinel');
     expect(body).toContain('bitbucket.org/insulcloud/sbom-sentinel');
   });
+
+  it('includes STALE headline and folder info when hasStaleSboms', () => {
+    const body = buildEmailBody(SUMMARY_STALE);
+    expect(body).toContain('STALE SBOM DATA');
+    expect(body).toContain('sbom-24-06-2026');
+    expect(body).toContain('6 day(s) old');
+  });
 });
 
 // ── buildEmailSubject ─────────────────────────────────────────────────────────
@@ -388,5 +425,9 @@ describe('buildEmailSubject', () => {
 
   it('includes the date', () => {
     expect(buildEmailSubject(SUMMARY_CRITICAL)).toContain('2024-04-14');
+  });
+
+  it('mentions stale SBOM data when hasStaleSboms', () => {
+    expect(buildEmailSubject(SUMMARY_STALE)).toContain('stale');
   });
 });

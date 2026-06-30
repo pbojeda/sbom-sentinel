@@ -47,6 +47,16 @@ export function buildSummary(results: RepoResult[], now: Date = new Date()): Glo
       errorMessage: r.errorMessage ?? 'Unknown error',
     }));
 
+  const hasStaleSboms = results.some((r) => !!r.staleWarning);
+  const seenFolderDates = new Set<string>();
+  const reposWithStaleWarnings: GlobalSummary['reposWithStaleWarnings'] = [];
+  for (const r of results) {
+    if (r.staleWarning && !seenFolderDates.has(r.branch)) {
+      seenFolderDates.add(r.branch);
+      reposWithStaleWarnings.push({ folderDate: r.branch, message: r.staleWarning });
+    }
+  }
+
   const repositories: RepoSummary[] = results.map((r) => ({
     repo: r.repo,
     branch: r.branch,
@@ -63,8 +73,10 @@ export function buildSummary(results: RepoResult[], now: Date = new Date()): Glo
     totals,
     hasCriticalOrHigh,
     hasErrors,
+    hasStaleSboms,
     reposWithIssues,
     reposWithErrors,
+    reposWithStaleWarnings,
     repositories,
   };
 }
@@ -115,6 +127,8 @@ export function generateText(summary: GlobalSummary): string {
     lines.push('STATUS: CRITICAL / HIGH VULNERABILITIES FOUND');
   } else if (summary.hasErrors) {
     lines.push('STATUS: SCAN ERRORS — some repositories could not be scanned');
+  } else if (summary.hasStaleSboms) {
+    lines.push('STATUS: WARNING — SBOM data may be stale, results may not reflect latest vulnerabilities');
   } else {
     lines.push('STATUS: OK — no critical or high vulnerabilities found');
   }
@@ -178,6 +192,15 @@ export function generateText(summary: GlobalSummary): string {
     lines.push('');
   }
 
+  // Stale SBOM warnings
+  if (summary.reposWithStaleWarnings.length > 0) {
+    lines.push('STALE SBOM DATA');
+    for (const w of summary.reposWithStaleWarnings) {
+      lines.push(`  ${w.folderDate}: ${w.message}`);
+    }
+    lines.push('');
+  }
+
   lines.push(SEP);
   lines.push(`Generated at: ${summary.generatedAt}`);
   lines.push('sbom-sentinel  https://bitbucket.org/insulcloud/sbom-sentinel');
@@ -187,11 +210,13 @@ export function generateText(summary: GlobalSummary): string {
 }
 
 export function generateHtml(summary: GlobalSummary, csvFilename?: string): string {
-  const bannerClass = summary.hasCriticalOrHigh ? 'danger' : summary.hasErrors ? 'warning' : 'ok';
+  const bannerClass = summary.hasCriticalOrHigh ? 'danger' : (summary.hasErrors || summary.hasStaleSboms) ? 'warning' : 'ok';
   const bannerText = summary.hasCriticalOrHigh
     ? `Critical or high vulnerabilities detected — immediate attention required.`
     : summary.hasErrors
     ? `Some repositories could not be scanned. Review errors below.`
+    : summary.hasStaleSboms
+    ? `SBOM data may be stale — scan results may not reflect the latest published vulnerabilities.`
     : `All repositories scanned successfully. No critical or high vulnerabilities found.`;
 
   const badges = (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const)
@@ -231,6 +256,21 @@ export function generateHtml(summary: GlobalSummary, csvFilename?: string): stri
     <div class="error-box">
       <strong>${esc(e.repo)}</strong> (${esc(e.branch)})<br>
       <code>${esc(e.errorMessage)}</code>
+    </div>`,
+      )
+      .join('')}`;
+
+  const staleSection =
+    summary.reposWithStaleWarnings.length === 0
+      ? ''
+      : `
+    <h2>Stale SBOM Data</h2>
+    ${summary.reposWithStaleWarnings
+      .map(
+        (w) => `
+    <div class="warning-box">
+      <strong>${esc(w.folderDate)}</strong><br>
+      <code>${esc(w.message)}</code>
     </div>`,
       )
       .join('')}`;
@@ -326,6 +366,7 @@ export function generateHtml(summary: GlobalSummary, csvFilename?: string): stri
     a:hover{text-decoration:underline}
     code{font-family:ui-monospace,monospace;font-size:12px;background:#f3f4f6;padding:1px 5px;border-radius:3px}
     .error-box{background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:10px 14px;margin:6px 0;font-size:13px}
+    .warning-box{background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:10px 14px;margin:6px 0;font-size:13px}
     .col-version{color:#6b7280;font-size:12px}
     .csv-link{display:inline-flex;align-items:center;gap:6px;margin:10px 0 4px;font-size:13px;color:#2563eb;text-decoration:none;font-weight:500}
     .csv-link:hover{text-decoration:underline}
@@ -339,6 +380,7 @@ export function generateHtml(summary: GlobalSummary, csvFilename?: string): stri
       .banner.danger{background:#450a0a;color:#f87171;border-color:#991b1b}
       .banner.warning{background:#451a03;color:#fbbf24;border-color:#92400e}
       .error-box{background:#450a0a;border-color:#991b1b}
+      .warning-box{background:#451a03;border-color:#92400e}
       .badge.critical{background:#450a0a;color:#f87171;border-color:#991b1b}
       .badge.high{background:#431407;color:#fb923c;border-color:#9a3412}
       .badge.medium{background:#422006;color:#fbbf24;border-color:#92400e}
@@ -387,6 +429,7 @@ export function generateHtml(summary: GlobalSummary, csvFilename?: string): stri
   </table>
   </div>
   ${errorsSection}
+  ${staleSection}
   ${findingsSection}
 
   <footer>
